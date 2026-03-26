@@ -15,9 +15,9 @@ from telegram.ext import (
 # =========================
 # CONFIG
 # =========================
-BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
-ADMIN_ID = 123456789  # خپل Telegram numeric ID دلته ولیکه
-BOT_USERNAME = "EasyEarnAppBot"  # بدون @
+BOT_TOKEN = "8713775500:AAE1XxzR3T6BKp22HmsCc9NU7cZg-htE6Bc"
+ADMIN_ID = 123456789
+BOT_USERNAME = "EasyEarnAppBot"
 
 FORCE_JOIN_USERNAME = "@easyearnofficial1222"
 FORCE_JOIN_LINK = "https://t.me/easyearnofficial1222"
