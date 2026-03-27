@@ -16,7 +16,7 @@ from telegram.ext import (
 # CONFIG
 # =========================
 BOT_TOKEN = "8713775500:AAE1XxzR3T6BKp22HmsCc9NU7cZg-htE6Bc"
-ADMIN_ID = 123456789
+ADMIN_ID = 1347546821
 BOT_USERNAME = "EasyEarnAppBot"
 
 FORCE_JOIN_USERNAME = "@easyearnofficial1222"
