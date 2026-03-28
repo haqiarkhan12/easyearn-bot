@@ -441,7 +441,6 @@ async def check_join(bot, chat_username: str, user_id: int) -> bool:
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     ensure_user(user.id, user.username or "", user.full_name or "")
 
