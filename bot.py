@@ -500,6 +500,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
 # language
+# language
 if data == "lang_ps":
     set_lang(user.id, "ps")
     await query.edit_message_text("PS OK")
@@ -509,10 +510,13 @@ if data == "lang_en":
     set_lang(user.id, "en")
     await query.edit_message_text("EN OK")
     return
-    if data == "change_lang":
-        await query.edit_message_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
-        return
 
+if data == "change_lang":
+    await query.edit_message_text(
+        TEXTS["ps"]["choose_lang"],
+        reply_markup=lang_keyboard()
+    )
+    return
     # force join
     if data == "check_force_join":
         joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
