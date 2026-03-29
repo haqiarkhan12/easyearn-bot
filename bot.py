@@ -509,7 +509,7 @@ if data == "lang_en":
     set_lang(user.id, "en")
     await query.edit_message_text("EN OK")
     return
-
+    
     if data == "change_lang":
         await query.edit_message_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
         return
