@@ -501,7 +501,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # language
     if data == "lang_ps":
-    set_lang(user.id, "ps")
+     set_lang(user.id, "ps")
 
     joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
     if not joined:
