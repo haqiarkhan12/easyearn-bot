@@ -501,67 +501,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # language
     if data == "lang_ps":
-     set_lang(user.id, "ps")
-
-    joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
-    if not joined:
-        await query.edit_message_text(
-            t(user.id, "must_join"),
-            reply_markup=force_join_keyboard(user.id)
-        )
-        return
-
-    row = get_user(user.id)
-    if row and row["role"] == "worker":
-        await query.edit_message_text(
-            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
-            reply_markup=worker_menu(user.id)
-        )
-        return
-
-    if row and row["role"] == "client":
-        await query.edit_message_text(
-            f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
-            reply_markup=client_menu(user.id)
-        )
-        return
-
-    await query.edit_message_text(
-        t(user.id, "choose_role"),
-        reply_markup=role_keyboard(user.id)
-    )
+    set_lang(user.id, "ps")
+    await query.edit_message_text("PS OK")
     return
 
 if data == "lang_en":
     set_lang(user.id, "en")
-
-    joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
-    if not joined:
-        await query.edit_message_text(
-            t(user.id, "must_join"),
-            reply_markup=force_join_keyboard(user.id)
-        )
-        return
-
-    row = get_user(user.id)
-    if row and row["role"] == "worker":
-        await query.edit_message_text(
-            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
-            reply_markup=worker_menu(user.id)
-        )
-        return
-
-    if row and row["role"] == "client":
-        await query.edit_message_text(
-            f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
-            reply_markup=client_menu(user.id)
-        )
-        return
-
-    await query.edit_message_text(
-        t(user.id, "choose_role"),
-        reply_markup=role_keyboard(user.id)
-    )
+    await query.edit_message_text("EN OK")
     return
 
     if data == "change_lang":
