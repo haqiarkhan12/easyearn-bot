@@ -254,7 +254,7 @@ TEXTS = {
         "joined_btn": "✅ جوین مې کړ",
         "join_failed": "❌ مهرباني وکړئ اول چینل جوین کړئ.",
         "choose_role": "مهرباني وکړئ خپل رول انتخاب کړئ:",
-        "worker": "👷 کارکوونک",
+        "worker": "👷 کارکوونکي",
         "client": "📢 چینل لرونکي",
         "welcome_worker": "👋 ښه راغلاست کارکونکي ته",
         "welcome_client": "👋 ښه راغلاست چینل لرونکي ته",
@@ -501,14 +501,68 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # language
     if data == "lang_ps":
-        set_lang(user.id, "ps")
-        await query.edit_message_text(t(user.id, "must_join"), reply_markup=force_join_keyboard(user.id))
+    set_lang(user.id, "ps")
+
+    joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+    if not joined:
+        await query.edit_message_text(
+            t(user.id, "must_join"),
+            reply_markup=force_join_keyboard(user.id)
+        )
         return
 
-    if data == "lang_en":
-        set_lang(user.id, "en")
-        await query.edit_message_text(t(user.id, "must_join"), reply_markup=force_join_keyboard(user.id))
+    row = get_user(user.id)
+    if row and row["role"] == "worker":
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=worker_menu(user.id)
+        )
         return
+
+    if row and row["role"] == "client":
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    await query.edit_message_text(
+        t(user.id, "choose_role"),
+        reply_markup=role_keyboard(user.id)
+    )
+    return
+
+if data == "lang_en":
+    set_lang(user.id, "en")
+
+    joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+    if not joined:
+        await query.edit_message_text(
+            t(user.id, "must_join"),
+            reply_markup=force_join_keyboard(user.id)
+        )
+        return
+
+    row = get_user(user.id)
+    if row and row["role"] == "worker":
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if row and row["role"] == "client":
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    await query.edit_message_text(
+        t(user.id, "choose_role"),
+        reply_markup=role_keyboard(user.id)
+    )
+    return
 
     if data == "change_lang":
         await query.edit_message_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
