@@ -789,6 +789,443 @@ if data == "change_lang":
         cur.execute("SELECT * FROM withdrawals WHERE id = ?", (wd_id,))
         wd = cur.fetchone()
         if not wd or wd["status"] != "pending":
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user = update.effective_user
+    ensure_user(user.id, user.username or "", user.full_name or "")
+    data = query.data
+
+    # language
+    if data == "lang_ps":
+        set_lang(user.id, "ps")
+
+        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+        if not joined:
+            await query.edit_message_text(
+                t(user.id, "must_join"),
+                reply_markup=force_join_keyboard(user.id)
+            )
+            return
+
+        row = get_user(user.id)
+        if row and row["role"] == "worker":
+            await query.edit_message_text(
+                f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        if row and row["role"] == "client":
+            await query.edit_message_text(
+                f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
+                reply_markup=client_menu(user.id)
+            )
+            return
+
+        await query.edit_message_text(
+            t(user.id, "choose_role"),
+            reply_markup=role_keyboard(user.id)
+        )
+        return
+
+    if data == "lang_en":
+        set_lang(user.id, "en")
+
+        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+        if not joined:
+            await query.edit_message_text(
+                t(user.id, "must_join"),
+                reply_markup=force_join_keyboard(user.id)
+            )
+            return
+
+        row = get_user(user.id)
+        if row and row["role"] == "worker":
+            await query.edit_message_text(
+                f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        if row and row["role"] == "client":
+            await query.edit_message_text(
+                f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
+                reply_markup=client_menu(user.id)
+            )
+            return
+
+        await query.edit_message_text(
+            t(user.id, "choose_role"),
+            reply_markup=role_keyboard(user.id)
+        )
+        return
+
+    if data == "change_lang":
+        await query.edit_message_text(
+            TEXTS["ps"]["choose_lang"],
+            reply_markup=lang_keyboard()
+        )
+        return
+
+    # force join
+    if data == "check_force_join":
+        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+        if not joined:
+            await query.answer(t(user.id, "join_failed"), show_alert=True)
+            return
+        await query.edit_message_text(
+            t(user.id, "choose_role"),
+            reply_markup=role_keyboard(user.id)
+        )
+        return
+
+    # roles
+    if data == "role_worker":
+        set_role(user.id, "worker")
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data == "role_client":
+        set_role(user.id, "client")
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_client')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    # worker menu
+    if data == "worker_balance":
+        await query.edit_message_text(
+            t(user.id, "balance", amount=get_balance(user.id)),
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data == "worker_bonus":
+        if get_balance(ADMIN_ID) < 1:
+            await query.edit_message_text(
+                t(user.id, "bonus_admin_low"),
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        row = get_user(user.id)
+        if row["last_bonus_at"]:
+            last = datetime.fromisoformat(row["last_bonus_at"])
+            if datetime.now(timezone.utc) - last < timedelta(hours=24):
+                await query.edit_message_text(
+                    t(user.id, "bonus_wait"),
+                    reply_markup=worker_menu(user.id)
+                )
+                return
+
+        change_balance(ADMIN_ID, -1)
+        change_balance(user.id, 1)
+        cur.execute(
+            "UPDATE users SET last_bonus_at = ? WHERE user_id = ?",
+            (now_iso(), user.id)
+        )
+        conn.commit()
+
+        await query.edit_message_text(
+            t(user.id, "bonus_added"),
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data == "worker_referral":
+        await query.edit_message_text(
+            t(
+                user.id,
+                "referral",
+                link=referral_link(user.id),
+                count=referral_count(user.id)
+            ),
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data == "worker_tasks":
+        cur.execute("SELECT * FROM campaigns WHERE status = 'active' ORDER BY id DESC")
+        campaigns = cur.fetchall()
+        if not campaigns:
+            await query.edit_message_text(
+                t(user.id, "tasks_empty"),
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        title_text = "📢 موجود ټاسکونه" if user_lang(user.id) == "ps" else "📢 Available Tasks"
+        await query.edit_message_text(
+            title_text,
+            reply_markup=campaign_list_keyboard(user.id, campaigns)
+        )
+        return
+
+    if data == "back_worker_menu":
+        await query.edit_message_text(
+            f"{t(user.id, 'welcome_worker')}\n\n{t(user.id, 'main_menu')}",
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data.startswith("open_campaign_"):
+        campaign_id = int(data.split("_")[-1])
+        c = get_campaign(campaign_id)
+        if not c:
+            return
+
+        title = c["title_ps"] if user_lang(user.id) == "ps" else c["title_en"]
+        text = f"{title}\n\n💰 Reward: {c['reward_afn']} AFN"
+        await query.edit_message_text(
+            text,
+            reply_markup=task_card_keyboard(user.id, c["id"], c["link"])
+        )
+        return
+
+    if data.startswith("verify_campaign_"):
+        campaign_id = int(data.split("_")[-1])
+        c = get_campaign(campaign_id)
+        if not c:
+            return
+
+        cur.execute(
+            "SELECT * FROM user_campaigns WHERE user_id = ? AND campaign_id = ?",
+            (user.id, campaign_id)
+        )
+        existing = cur.fetchone()
+        if existing:
+            await query.edit_message_text(
+                t(user.id, "task_already"),
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        ok = await check_join(context.bot, c["chat_username"], user.id)
+        if not ok:
+            await query.edit_message_text(
+                t(user.id, "task_fail"),
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        owner_id = c["owner_user_id"]
+        reward = c["reward_afn"]
+
+        if get_balance(owner_id) < reward:
+            await query.edit_message_text(
+                t(user.id, "task_owner_low"),
+                reply_markup=worker_menu(user.id)
+            )
+            return
+
+        change_balance(owner_id, -reward)
+        change_balance(user.id, reward)
+
+        worker_row = get_user(user.id)
+        if worker_row and worker_row["referrer_id"] and worker_row["referral_paid"] == 0:
+            if get_balance(ADMIN_ID) >= 2:
+                change_balance(ADMIN_ID, -2)
+                change_balance(worker_row["referrer_id"], 2)
+                cur.execute(
+                    "UPDATE users SET referral_paid = 1 WHERE user_id = ?",
+                    (user.id,)
+                )
+                conn.commit()
+
+        cur.execute("""
+            INSERT INTO user_campaigns (user_id, campaign_id, status, created_at)
+            VALUES (?, ?, 'completed', ?)
+        """, (user.id, campaign_id, now_iso()))
+        cur.execute(
+            "UPDATE campaigns SET completed_count = completed_count + 1 WHERE id = ?",
+            (campaign_id,)
+        )
+        conn.commit()
+
+        await query.edit_message_text(
+            t(user.id, "task_done", reward=reward),
+            reply_markup=worker_menu(user.id)
+        )
+        return
+
+    if data == "worker_withdraw":
+        context.user_data["flow"] = "withdraw"
+        context.user_data["withdraw_step"] = "amount"
+        await query.message.reply_text(t(user.id, "withdraw_ask_amount"))
+        return
+
+    # client menu
+    if data == "client_balance":
+        await query.edit_message_text(
+            t(user.id, "balance", amount=get_balance(user.id)),
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    if data == "client_bonus":
+        if get_balance(ADMIN_ID) < 1:
+            await query.edit_message_text(
+                t(user.id, "bonus_admin_low"),
+                reply_markup=client_menu(user.id)
+            )
+            return
+
+        row = get_user(user.id)
+        if row["last_bonus_at"]:
+            last = datetime.fromisoformat(row["last_bonus_at"])
+            if datetime.now(timezone.utc) - last < timedelta(hours=24):
+                await query.edit_message_text(
+                    t(user.id, "bonus_wait"),
+                    reply_markup=client_menu(user.id)
+                )
+                return
+
+        change_balance(ADMIN_ID, -1)
+        change_balance(user.id, 1)
+        cur.execute(
+            "UPDATE users SET last_bonus_at = ? WHERE user_id = ?",
+            (now_iso(), user.id)
+        )
+        conn.commit()
+
+        await query.edit_message_text(
+            t(user.id, "bonus_added"),
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    if data == "client_referral":
+        await query.edit_message_text(
+            t(
+                user.id,
+                "referral",
+                link=referral_link(user.id),
+                count=referral_count(user.id)
+            ),
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    if data == "client_deposit":
+        context.user_data["flow"] = "deposit"
+        context.user_data["deposit_step"] = "method"
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Hesab Pay", callback_data="deposit_method_hesab")],
+            [InlineKeyboardButton("Atoma Pay", callback_data="deposit_method_atoma")],
+        ])
+        await query.edit_message_text(
+            t(user.id, "deposit_menu"),
+            reply_markup=keyboard
+        )
+        return
+
+    if data.startswith("deposit_method_"):
+        method = data.split("_")[-1]
+        context.user_data["deposit_method"] = method
+        context.user_data["deposit_step"] = "amount"
+
+        number = HESAB_PAY if method == "hesab" else ATOMA_PAY
+        await query.message.reply_text(
+            f"Send to: {number}\n\n{t(user.id, 'deposit_amount_prompt')}"
+        )
+        return
+
+    if data == "client_add_channel":
+        context.user_data["flow"] = "create_campaign"
+        context.user_data["campaign_type"] = "channel"
+        context.user_data["campaign_step"] = "link"
+        await query.message.reply_text(t(user.id, "ask_link"))
+        return
+
+    if data == "client_add_group":
+        context.user_data["flow"] = "create_campaign"
+        context.user_data["campaign_type"] = "group"
+        context.user_data["campaign_step"] = "link"
+        await query.message.reply_text(t(user.id, "ask_link"))
+        return
+
+    if data == "client_campaigns":
+        cur.execute(
+            "SELECT * FROM campaigns WHERE owner_user_id = ? ORDER BY id DESC",
+            (user.id,)
+        )
+        rows = cur.fetchall()
+        if not rows:
+            await query.edit_message_text(
+                t(user.id, "campaigns_empty"),
+                reply_markup=client_menu(user.id)
+            )
+            return
+
+        lines = []
+        for r in rows:
+            title = r["title_ps"] if user_lang(user.id) == "ps" else r["title_en"]
+            lines.append(
+                f"• {title}\nReward: {r['reward_afn']} AFN | Done: {r['completed_count']}"
+            )
+        await query.edit_message_text(
+            "\n\n".join(lines),
+            reply_markup=client_menu(user.id)
+        )
+        return
+
+    # admin deposit approve/reject
+    if data.startswith("admin_approve_deposit_"):
+        if user.id != ADMIN_ID:
+            return
+        dep_id = int(data.split("_")[-1])
+        cur.execute("SELECT * FROM deposits WHERE id = ?", (dep_id,))
+        dep = cur.fetchone()
+        if not dep or dep["status"] != "pending":
+            return
+
+        final_amount, fee_amount = deposit_fee(dep["amount"])
+        change_balance(dep["user_id"], final_amount)
+        cur.execute("UPDATE deposits SET status = 'approved' WHERE id = ?", (dep_id,))
+        conn.commit()
+
+        await context.bot.send_message(
+            dep["user_id"],
+            f"{t(dep['user_id'], 'approved_deposit')}\n\nRequested: {dep['amount']} AFN\nFee: {fee_amount} AFN\nAdded: {final_amount} AFN"
+        )
+        await query.edit_message_caption(
+            caption=(query.message.caption or "") + f"\n\n✅ Approved\nFee: {fee_amount} AFN\nAdded: {final_amount} AFN"
+        )
+        return
+
+    if data.startswith("admin_reject_deposit_"):
+        if user.id != ADMIN_ID:
+            return
+        dep_id = int(data.split("_")[-1])
+        cur.execute("SELECT * FROM deposits WHERE id = ?", (dep_id,))
+        dep = cur.fetchone()
+        if not dep or dep["status"] != "pending":
+            return
+
+        cur.execute("UPDATE deposits SET status = 'rejected' WHERE id = ?", (dep_id,))
+        conn.commit()
+
+        await context.bot.send_message(dep["user_id"], t(dep["user_id"], "rejected"))
+        await query.edit_message_caption(
+            caption=(query.message.caption or "") + "\n\n❌ Rejected"
+        )
+        return
+
+    # admin withdraw approve/reject
+    if data.startswith("admin_approve_withdraw_"):
+        if user.id != ADMIN_ID:
+            return
+        wd_id = int(data.split("_")[-1])
+        cur.execute("SELECT * FROM withdrawals WHERE id = ?", (wd_id,))
+        wd = cur.fetchone()
+        if not wd or wd["status"] != "pending":
             return
 
         final_amount, fee_amount = withdraw_fee(wd["amount"])
@@ -799,7 +1236,9 @@ if data == "change_lang":
             wd["user_id"],
             f"{t(wd['user_id'], 'approved_withdraw')}\n\nRequested: {wd['amount']} AFN\nFee: {fee_amount} AFN\nYou will receive: {final_amount} AFN"
         )
-        await query.edit_message_text(query.message.text + f"\n\n✅ Approved\nFee: {fee_amount} AFN\nSend: {final_amount} AFN")
+        await query.edit_message_text(
+            query.message.text + f"\n\n✅ Approved\nFee: {fee_amount} AFN\nSend: {final_amount} AFN"
+        )
         return
 
     if data.startswith("admin_reject_withdraw_"):
