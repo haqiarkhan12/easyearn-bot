@@ -499,8 +499,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(user.id, user.username or "", user.full_name or "")
     data = query.data
 
-    # language
-    if data == "lang_ps":
+# language
+if data == "lang_ps":
     set_lang(user.id, "ps")
     await query.edit_message_text("PS OK")
     return
@@ -509,7 +509,6 @@ if data == "lang_en":
     set_lang(user.id, "en")
     await query.edit_message_text("EN OK")
     return
-    
     if data == "change_lang":
         await query.edit_message_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
         return
