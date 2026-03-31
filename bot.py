@@ -1146,6 +1146,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 Amount: {amount} AFN\n\n"
                 f"⏳ Status: Pending"
             )
+        )
 
             await update.message.reply_text(t(user.id, "withdraw_sent"))
             await show_main_menu(update.effective_chat.id, user.id, context)
