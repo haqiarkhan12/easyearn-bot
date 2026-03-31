@@ -544,16 +544,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(user.id, user.username or "", user.full_name or "")
     data = query.data
 
-    # language
+# language
     if data == "lang_ps":
         set_lang(user.id, "ps")
-        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
-        if not joined:
-            await query.edit_message_text(
-                t(user.id, "must_join"),
-                reply_markup=force_join_keyboard(user.id)
-            )
-            return
         await query.edit_message_text(
             main_menu_text(user.id),
             reply_markup=main_menu_keyboard(user.id)
@@ -562,13 +555,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "lang_en":
         set_lang(user.id, "en")
-        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
-        if not joined:
-            await query.edit_message_text(
-                t(user.id, "must_join"),
-                reply_markup=force_join_keyboard(user.id)
-            )
-            return
         await query.edit_message_text(
             main_menu_text(user.id),
             reply_markup=main_menu_keyboard(user.id)
@@ -576,27 +562,29 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "change_lang":
-        await query.edit_message_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
+        await query.edit_message_text(
+            TEXTS["ps"]["choose_lang"],
+            reply_markup=lang_keyboard()
+        )
         return
 
     # force join
     if data == "check_force_join":
-    if data == "check_force_join":
-    joined = True
-    for username, _ in FORCE_JOIN_CHANNELS:
-        if not await check_join(context.bot, username, user.id):
-            joined = False
-            break
+        joined = True
+        for username, _ in FORCE_JOIN_CHANNELS:
+            if not await check_join(context.bot, username, user.id):
+                joined = False
+                break
 
-    if not joined:
-        await query.answer(t(user.id, "join_failed"), show_alert=True)
+        if not joined:
+            await query.answer(t(user.id, "join_failed"), show_alert=True)
+            return
+
+        await query.edit_message_text(
+            main_menu_text(user.id),
+            reply_markup=main_menu_keyboard(user.id)
+        )
         return
-
-    await query.edit_message_text(
-        main_menu_text(user.id),
-        reply_markup=main_menu_keyboard(user.id)
-    )
-    return
 
     # open menus
     if data == "back_main_menu":
