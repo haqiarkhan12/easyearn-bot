@@ -1120,21 +1120,32 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_withdraw_{wd_id}"),
             ]])
 
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"💸 Withdraw Request #{wd_id}\n\n"
-                    f"User: {full_name}\n"
-                    f"Username: @{user.username or 'N/A'}\n"
-                    f"User ID: {user.id}\n"
-                    f"Requested Amount: {amount} AFN\n"
-                    f"Fee: {fee_amount} AFN\n"
-                    f"Send Amount: {final_amount} AFN\n"
-                    f"Phone: {phone}\n"
-                    f"Network: {network}"
-                ),
-                reply_markup=buttons_markup
-            )
+           await context.bot.send_message(
+    chat_id=ADMIN_ID,
+    text=(
+        f"💸 Withdraw Request #{wd_id}\n\n"
+        f"User: {full_name}\n"
+        f"Username: @{user.username or 'N/A'}\n"
+        f"User ID: {user.id}\n"
+        f"Requested Amount: {amount} AFN\n"
+        f"Fee: {fee_amount} AFN\n"
+        f"Send Amount: {final_amount} AFN\n"
+        f"Phone: {phone}\n"
+        f"Network: {network}"
+    ),
+    reply_markup=buttons_markup
+)
+
+channel_msg = await context.bot.send_message(
+    chat_id="@easyearnpayments",
+    text=(
+        f"💸 Withdraw Request #{wd_id}\n\n"
+        f"👤 Name: {full_name}\n"
+        f"📱 Phone: {phone}\n"
+        f"🌐 Network: {network}\n"
+        f"💰 Amount: {amount} AFN\n\n"
+        f"⏳ Status: Pending"
+    )
 
             await update.message.reply_text(t(user.id, "withdraw_sent"))
             await show_main_menu(update.effective_chat.id, user.id, context)
