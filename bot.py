@@ -340,7 +340,7 @@ def lang_keyboard():
         ]
     ])
 
-def force_join_keyboard(user_id: int):
+
 def force_join_keyboard(user_id: int):
     buttons = []
 
