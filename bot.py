@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS campaigns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     owner_user_id INTEGER NOT NULL,
     title_ps TEXT NOT NULL,
     title_en TEXT NOT NULL,
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_campaigns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     campaign_id INTEGER NOT NULL,
     status TEXT DEFAULT 'completed',
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS user_campaigns (
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS deposits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     amount INTEGER NOT NULL,
     method TEXT NOT NULL,
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS deposits (
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS withdrawals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL,
     amount INTEGER NOT NULL,
     network TEXT NOT NULL,
