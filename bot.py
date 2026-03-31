@@ -132,37 +132,37 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 def ensure_user(user_id: int, username: str, full_name: str):
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     if not row:
         cur.execute("""
             INSERT INTO users (user_id, username, full_name, created_at)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """, (user_id, username, full_name, now_iso()))
     else:
         cur.execute("""
             UPDATE users
-            SET username = ?, full_name = ?
-            WHERE user_id = ?
+            SET username = %s, full_name = %s
+            WHERE user_id = %s
         """, (username, full_name, user_id))
     conn.commit()
 
 def ensure_admin_account():
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (ADMIN_ID,))
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (ADMIN_ID,))
     row = cur.fetchone()
     if not row:
         cur.execute("""
             INSERT INTO users (user_id, username, full_name, lang, role, balance, created_at)
-            VALUES (?, ?, ?, 'ps', 'client', 0, ?)
+            VALUES (%s, %s, %s, 'ps', 'client', 0, %s)
         """, (ADMIN_ID, "admin", "Admin", now_iso()))
         conn.commit()
 
 def get_user(user_id: int):
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     return cur.fetchone()
 
 def set_lang(user_id: int, lang: str):
-    cur.execute("UPDATE users SET lang = ? WHERE user_id = ?", (lang, user_id))
+    cur.execute("UPDATE users SET lang = %s WHERE user_id = %s", (lang, user_id))
     conn.commit()
 
 def user_lang(user_id: int) -> str:
@@ -170,7 +170,7 @@ def user_lang(user_id: int) -> str:
     return row["lang"] if row and row["lang"] in ("ps", "en") else "ps"
 
 def set_role(user_id: int, role: str):
-    cur.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+    cur.execute("UPDATE users SET role = %s WHERE user_id = %s", (role, user_id))
     conn.commit()
 
 def user_role(user_id: int):
