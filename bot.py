@@ -1203,12 +1203,7 @@ def main():
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, flow_router))
     app.add_handler(CommandHandler("dbcheck", dbcheck_command))
-    if app.job_queue:
-        app.job_queue.run_repeating(
-            auto_post_promo,
-            interval=86400,
-            first=60
-        )
+    
 
     print("EasyEarn bot is running...")
     app.run_polling(drop_pending_updates=True)
