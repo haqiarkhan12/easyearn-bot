@@ -1,4 +1,5 @@
-import sqlite3
+import psycopg2
+import os
 import logging
 import re
 from datetime import datetime, timedelta, timezone
