@@ -536,6 +536,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu_keyboard(user.id)
         )
 # =========================
+# DB CHECK COMMAND
+# =========================
+async def dbcheck_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    try:
+        cur.execute("SELECT COUNT(*) FROM users")
+        users_count = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM campaigns")
+        campaigns_count = cur.fetchone()[0]
+
+        await update.message.reply_text(
+            f"Users: {users_count}\n"
+            f"Campaigns: {campaigns_count}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+# =========================
 # CALLBACKS
 # =========================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1180,7 +1200,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, flow_router))
-
+    app.add_handler(CommandHandler("dbcheck", dbcheck_command))
     if app.job_queue:
         app.job_queue.run_repeating(
             auto_post_promo,
