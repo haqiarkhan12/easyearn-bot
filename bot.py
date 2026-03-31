@@ -516,19 +516,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=lang_keyboard()
         )
         return
-
+    
     joined = True
+
 for username, _ in FORCE_JOIN_CHANNELS:
-    if not await check_join(context.bot, username, user.id):
+    ok = await check_join(context.bot, username, user.id)
+    if not ok:
         joined = False
         break
-    if not joined:
-        await update.message.reply_text(
-            t(user.id, "must_join"),
-            reply_markup=force_join_keyboard(user.id)
-        )
-        return
 
+if not joined:
+    await update.message.reply_text(
+        t(user.id, "must_join"),
+        reply_markup=force_join_keyboard(user.id)
+    )
+    return
     await update.message.reply_text(
         main_menu_text(user.id),
         reply_markup=main_menu_keyboard(user.id)
@@ -568,10 +570,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # force join
+# force join
     if data == "check_force_join":
         joined = True
-        for username, _ in FORCE_JOIN_CHANNELS:
+
+        for username, link in FORCE_JOIN_CHANNELS:
             if not await check_join(context.bot, username, user.id):
                 joined = False
                 break
