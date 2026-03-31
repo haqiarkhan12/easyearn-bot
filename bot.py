@@ -1134,7 +1134,6 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=buttons_markup
         )
-
         channel_msg = await context.bot.send_message(
             chat_id="@easyearnpayments",
             text=(
