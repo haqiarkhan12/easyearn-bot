@@ -20,8 +20,10 @@ BOT_TOKEN = "8713775500:AAE1XxzR3T6BKp22HmsCc9NU7cZg-htE6Bc"
 ADMIN_ID = 1347546821
 BOT_USERNAME = "EasyEarnAppBot"
 
-FORCE_JOIN_USERNAME = "@easyearnofficial1222"
-FORCE_JOIN_LINK = "https://t.me/easyearnofficial1222"
+FORCE_JOIN_CHANNELS = [
+    ("@easyearnofficial1222", "https://t.me/easyearnofficial1222"),
+    ("@easyearnpayments", "https://t.me/easyearnpayments"),
+]
 
 HESAB_PAY = "+93708310201"
 ATOMA_PAY = "+93770876916"
@@ -339,10 +341,15 @@ def lang_keyboard():
     ])
 
 def force_join_keyboard(user_id: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Join Channel", url=FORCE_JOIN_LINK)],
-        [InlineKeyboardButton(t(user_id, "joined_btn"), callback_data="check_force_join")],
-    ])
+def force_join_keyboard(user_id: int):
+    buttons = []
+
+    for username, link in FORCE_JOIN_CHANNELS:
+        buttons.append([InlineKeyboardButton("📢 Join Channel", url=link)])
+
+    buttons.append([InlineKeyboardButton(t(user_id, "joined_btn"), callback_data="check_force_join")])
+
+    return InlineKeyboardMarkup(buttons)
 
 def main_menu_keyboard(user_id: int):
     return InlineKeyboardMarkup([
@@ -510,7 +517,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
+    joined = True
+for username, _ in FORCE_JOIN_CHANNELS:
+    if not await check_join(context.bot, username, user.id):
+        joined = False
+        break
     if not joined:
         await update.message.reply_text(
             t(user.id, "must_join"),
@@ -571,15 +582,22 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # force join
     if data == "check_force_join":
-        joined = await check_join(context.bot, FORCE_JOIN_USERNAME, user.id)
-        if not joined:
-            await query.answer(t(user.id, "join_failed"), show_alert=True)
-            return
-        await query.edit_message_text(
-            main_menu_text(user.id),
-            reply_markup=main_menu_keyboard(user.id)
-        )
+    if data == "check_force_join":
+    joined = True
+    for username, _ in FORCE_JOIN_CHANNELS:
+        if not await check_join(context.bot, username, user.id):
+            joined = False
+            break
+
+    if not joined:
+        await query.answer(t(user.id, "join_failed"), show_alert=True)
         return
+
+    await query.edit_message_text(
+        main_menu_text(user.id),
+        reply_markup=main_menu_keyboard(user.id)
+    )
+    return
 
     # open menus
     if data == "back_main_menu":
