@@ -540,7 +540,6 @@ for username, _ in FORCE_JOIN_CHANNELS:
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     user = update.effective_user
     ensure_user(user.id, user.username or "", user.full_name or "")
     data = query.data
