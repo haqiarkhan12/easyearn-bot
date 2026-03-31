@@ -1,5 +1,4 @@
 import psycopg2
-import sqlite3
 import os
 import logging
 import re
@@ -22,6 +21,10 @@ BOT_TOKEN = "8713775500:AAE1XxzR3T6BKp22HmsCc9NU7cZg-htE6Bc"
 ADMIN_ID = 1347546821
 BOT_USERNAME = "EasyEarnAppBot"
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+cur = conn.cursor()
 FORCE_JOIN_CHANNELS = [
     ("@easyearnofficial1222", "https://t.me/easyearnofficial1222"),
     ("@easyearnpayments", "https://t.me/easyearnpayments"),
@@ -51,9 +54,6 @@ logger = logging.getLogger(__name__)
 # =========================
 # DATABASE
 # =========================
-conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-conn.row_factory = sqlite3.Row
-cur = conn.cursor()
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
