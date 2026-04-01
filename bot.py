@@ -1112,7 +1112,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """, (user.id, amount, network, phone, full_name, now_iso()))
             conn.commit()
             wd_id = cur.lastrowid
-final_amount, fee_amount = withdraw_fee(amount)
+            final_amount, fee_amount = withdraw_fee(amount)
 
         buttons_markup = InlineKeyboardMarkup([
             [
