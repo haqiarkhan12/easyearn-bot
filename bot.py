@@ -167,7 +167,7 @@ def set_lang(user_id: int, lang: str):
 
 def user_lang(user_id: int) -> str:
     row = get_user(user_id)
-    return row["lang"] if row and row["lang"] in ("ps", "en") else "ps"
+    return row[3] if row and row[3] in ("ps", "en") else "ps"
 
 def set_role(user_id: int, role: str):
     cur.execute("UPDATE users SET role = %s WHERE user_id = %s", (role, user_id))
@@ -175,25 +175,26 @@ def set_role(user_id: int, role: str):
 
 def user_role(user_id: int):
     row = get_user(user_id)
-    return row["role"] if row else None
+    return row[4] if row else None
 
 def get_balance(user_id: int) -> int:
     row = get_user(user_id)
-    return int(row["balance"]) if row else 0
+    return int(row[5]) if row else 0
 
 def change_balance(user_id: int, amount: int):
-    cur.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+    cur.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (amount, user_id))
     conn.commit()
 
 def referral_link(user_id: int) -> str:
     return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
 
 def referral_count(user_id: int) -> int:
-    cur.execute("SELECT COUNT(*) AS c FROM users WHERE referrer_id = ?", (user_id,))
-    return cur.fetchone()["c"]
+    cur.execute("SELECT COUNT(*) AS c FROM users WHERE referrer_id = %s", (user_id,))
+row = cur.fetchone()
+return row[0] if row else 0
 
 def get_campaign(campaign_id: int):
-    cur.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,))
+    cur.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,))
     return cur.fetchone()
 
 def deposit_fee(amount: int):
