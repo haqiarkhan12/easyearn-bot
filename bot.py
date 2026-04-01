@@ -1113,12 +1113,16 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             wd_id = cur.lastrowid
 
-            final_amount, fee_amount = withdraw_fee(amount)
+ final_amount, fee_amount = withdraw_fee(amount)
 
-            buttons_markup = InlineKeyboardMarkup([[
+        buttons_markup = InlineKeyboardMarkup([
+            [
                 InlineKeyboardButton("✅ Approve", callback_data=f"admin_approve_withdraw_{wd_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_withdraw_{wd_id}"),
-            ]])
+                InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_withdraw_{wd_id}")
+            ]
+        ])
+
+        # Send to admin
             await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
@@ -1134,7 +1138,9 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             reply_markup=buttons_markup
         )
-             channel_msg = await context.bot.send_message(
+
+        # Send to channel
+            await context.bot.send_message(
             chat_id="@easyearnpayments",
             text=(
                 f"💸 Withdraw Request #{wd_id}\n\n"
@@ -1146,10 +1152,10 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
 
-            await update.message.reply_text(t(user.id, "withdraw_sent"))
-            await show_main_menu(update.effective_chat.id, user.id, context)
-            context.user_data.clear()
-            return
+        await update.message.reply_text(t(user.id, "withdraw_sent"))
+        await show_main_menu(update.effective_chat.id, user.id, context)
+        context.user_data.clear()
+        return
 
     # create campaign
     if flow == "create_campaign":
