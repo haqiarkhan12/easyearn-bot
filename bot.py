@@ -512,7 +512,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     row = get_user(user.id)
 
-    if not row or not row["lang"]:
+    if not row or not row[2]:
         await update.message.reply_text(
             TEXTS["ps"]["choose_lang"],
             reply_markup=lang_keyboard()
