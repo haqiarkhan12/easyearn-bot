@@ -179,6 +179,7 @@ def user_role(user_id: int):
 
 def get_balance(user_id: int) -> int:
     row = get_user(user_id)
+    print(row)
     return int(row[5]) if row else 0
 
 def change_balance(user_id: int, amount: int):
