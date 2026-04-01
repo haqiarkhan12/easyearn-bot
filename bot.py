@@ -988,7 +988,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user:
-    return
+     return
     user = update.effective_user
     ensure_user(user.id, user.username or "", user.full_name or "")
     flow = context.user_data.get("flow")
