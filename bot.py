@@ -190,8 +190,8 @@ def referral_link(user_id: int) -> str:
 
 def referral_count(user_id: int) -> int:
     cur.execute("SELECT COUNT(*) AS c FROM users WHERE referrer_id = %s", (user_id,))
-row = cur.fetchone()
-return row[0] if row else 0
+    row = cur.fetchone()
+    return row[0] if row else 0
 
 def get_campaign(campaign_id: int):
     cur.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,))
