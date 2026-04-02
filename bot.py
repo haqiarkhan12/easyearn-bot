@@ -226,6 +226,7 @@ def init_db() -> None:
 # HELPERS
 # =========================
 def ensure_user(user_id: int, username: str | None, full_name: str | None) -> None:
+    user_id = int(user_id)
     row = fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not row:
         execute(
@@ -682,7 +683,7 @@ async def show_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    ensure_user(user.id, user.username or "", user.full_name or "")
+    ensure_user(int(user.id), user.username or "", user.full_name or "")
 
     if context.args:
         arg = context.args[0]
