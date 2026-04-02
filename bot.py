@@ -10,6 +10,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -23,13 +24,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "EasyEarnAppBot")
+PAYMENT_CHANNEL = os.getenv("PAYMENT_CHANNEL", "@easyearnpayments")
 
 FORCE_JOIN_CHANNELS = [
     ("@easyearnofficial1222", "https://t.me/easyearnofficial1222"),
     ("@easyearnpayments", "https://t.me/easyearnpayments"),
 ]
 
-PAYMENT_CHANNEL = "@easyearnpayments"
 PROMO_MESSAGE = (
     "📢 Khan Digital Group\n"
     "https://t.me/haqyarserviceso1\n\n"
@@ -51,6 +52,7 @@ DEPOSIT_FEE_PERCENT = 5
 REFERRAL_REWARD_AFN = 10
 DAILY_BONUS_AFN = 1
 AUTO_LEAVE_PENALTY_CHECK_HOURS = 24
+PROMO_POST_INTERVAL_HOURS = 24
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is missing")
@@ -108,6 +110,13 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def safe_alter(query: str):
+    try:
+        execute(query)
+    except Exception as e:
+        logger.info("Safe alter skipped: %s", e)
+
+
 def init_db() -> None:
     conn = db_connect()
     cur = conn.cursor()
@@ -129,16 +138,6 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INTEGER DEFAULT 0")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS debt INTEGER DEFAULT 0")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_paid INTEGER DEFAULT 0")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at TEXT")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ps'")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
 
     cur.execute(
         """
@@ -176,11 +175,6 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("ALTER TABLE user_campaigns ADD COLUMN IF NOT EXISTS reward_given INTEGER DEFAULT 1")
-    cur.execute("ALTER TABLE user_campaigns ADD COLUMN IF NOT EXISTS penalty_applied INTEGER DEFAULT 0")
-    cur.execute("ALTER TABLE user_campaigns ADD COLUMN IF NOT EXISTS owner_user_id BIGINT")
-    cur.execute("ALTER TABLE user_campaigns ADD COLUMN IF NOT EXISTS reward_afn INTEGER DEFAULT 1")
-    cur.execute("ALTER TABLE user_campaigns ADD COLUMN IF NOT EXISTS last_checked_at TEXT")
 
     cur.execute(
         """
@@ -197,8 +191,6 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("ALTER TABLE deposits ADD COLUMN IF NOT EXISTS usdt_amount NUMERIC(12,2)")
-    cur.execute("ALTER TABLE deposits ADD COLUMN IF NOT EXISTS channel_message_id BIGINT")
 
     cur.execute(
         """
@@ -215,11 +207,32 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS channel_message_id BIGINT")
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS promo_chats (
+            chat_id BIGINT PRIMARY KEY,
+            title TEXT,
+            chat_type TEXT,
+            created_at TEXT,
+            is_active INTEGER DEFAULT 1
+        )
+        """
+    )
 
     conn.commit()
     cur.close()
     conn.close()
+
+    # Optional migration safety for old DBs
+    safe_alter("ALTER TABLE users ALTER COLUMN user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE users ALTER COLUMN referrer_id TYPE BIGINT")
+    safe_alter("ALTER TABLE campaigns ALTER COLUMN owner_user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE user_campaigns ALTER COLUMN user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE user_campaigns ALTER COLUMN owner_user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE deposits ALTER COLUMN user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE withdrawals ALTER COLUMN user_id TYPE BIGINT")
+    safe_alter("ALTER TABLE promo_chats ALTER COLUMN chat_id TYPE BIGINT")
 
 
 # =========================
@@ -256,11 +269,11 @@ def ensure_admin_account() -> None:
 
 
 def get_user(user_id: int) -> Optional[dict]:
-    return fetch_one("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    return fetch_one("SELECT * FROM users WHERE user_id = %s", (int(user_id),))
 
 
 def set_lang(user_id: int, lang: str) -> None:
-    execute("UPDATE users SET lang = %s WHERE user_id = %s", (lang, user_id))
+    execute("UPDATE users SET lang = %s WHERE user_id = %s", (lang, int(user_id)))
 
 
 def user_lang(user_id: int) -> str:
@@ -272,7 +285,7 @@ def user_lang(user_id: int) -> str:
 
 
 def set_role(user_id: int, role: str) -> None:
-    execute("UPDATE users SET role = %s WHERE user_id = %s", (role, user_id))
+    execute("UPDATE users SET role = %s WHERE user_id = %s", (role, int(user_id)))
 
 
 def get_balance(user_id: int) -> int:
@@ -285,12 +298,15 @@ def get_debt(user_id: int) -> int:
     return int(row.get("debt", 0)) if row else 0
 
 
-def set_balance(user_id: int, amount: int) -> None:
-    execute("UPDATE users SET balance = %s WHERE user_id = %s", (amount, user_id))
-
-
 def set_debt(user_id: int, amount: int) -> None:
-    execute("UPDATE users SET debt = %s WHERE user_id = %s", (amount, user_id))
+    execute("UPDATE users SET debt = %s WHERE user_id = %s", (amount, int(user_id)))
+
+
+def add_balance(user_id: int, amount: int) -> None:
+    execute(
+        "UPDATE users SET balance = COALESCE(balance, 0) + %s WHERE user_id = %s",
+        (amount, int(user_id)),
+    )
 
 
 def add_reward_with_debt_clear(user_id: int, reward: int) -> tuple[int, int]:
@@ -312,19 +328,12 @@ def add_reward_with_debt_clear(user_id: int, reward: int) -> tuple[int, int]:
     return cleared, added
 
 
-def add_balance(user_id: int, amount: int) -> None:
-    execute(
-        "UPDATE users SET balance = COALESCE(balance, 0) + %s WHERE user_id = %s",
-        (amount, user_id),
-    )
-
-
 def referral_link(user_id: int) -> str:
-    return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+    return f"https://t.me/{BOT_USERNAME}?start=ref_{int(user_id)}"
 
 
 def referral_count(user_id: int) -> int:
-    row = fetch_one("SELECT COUNT(*) AS c FROM users WHERE referrer_id = %s", (user_id,))
+    row = fetch_one("SELECT COUNT(*) AS c FROM users WHERE referrer_id = %s", (int(user_id),))
     return int(row["c"]) if row else 0
 
 
@@ -334,8 +343,7 @@ def deposit_fee(amount: int) -> tuple[int, int]:
 
 
 def withdraw_fee(amount: int) -> tuple[int, int]:
-    final_amount = amount
-    return final_amount, 0
+    return amount, 0
 
 
 def extract_chat_username(link: str) -> Optional[str]:
@@ -353,6 +361,44 @@ def get_campaign(campaign_id: int) -> Optional[dict]:
     return fetch_one("SELECT * FROM campaigns WHERE id = %s", (campaign_id,))
 
 
+def save_promo_chat(chat_id: int, title: str, chat_type: str) -> None:
+    execute(
+        """
+        INSERT INTO promo_chats (chat_id, title, chat_type, created_at, is_active)
+        VALUES (%s, %s, %s, %s, 1)
+        ON CONFLICT (chat_id)
+        DO UPDATE SET title = EXCLUDED.title, chat_type = EXCLUDED.chat_type, is_active = 1
+        """,
+        (int(chat_id), title, chat_type, now_iso()),
+    )
+
+
+def deactivate_promo_chat(chat_id: int) -> None:
+    execute("UPDATE promo_chats SET is_active = 0 WHERE chat_id = %s", (int(chat_id),))
+
+
+async def safe_delete_message(bot, chat_id: int, message_id: Optional[int]):
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+
+async def clear_prompt_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    ids = context.user_data.get("cleanup_message_ids", [])
+    for msg_id in ids:
+        await safe_delete_message(context.bot, chat_id, msg_id)
+    context.user_data["cleanup_message_ids"] = []
+
+
+def remember_prompt_message(context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    ids = context.user_data.get("cleanup_message_ids", [])
+    ids.append(message_id)
+    context.user_data["cleanup_message_ids"] = ids
+
+
 # =========================
 # TEXTS
 # =========================
@@ -360,8 +406,6 @@ TEXTS = {
     "ps": {
         "choose_lang": "ژبه انتخاب کړئ:",
         "choose_area": "مهرباني وکړئ برخه انتخاب کړئ:",
-        "worker": "👷 ورکر",
-        "client": "📢 کلاینت",
         "welcome": "ښه راغلاست EasyEarn Bot ته",
         "main_menu": "اصلي مینو",
         "force_join": "مهرباني وکړئ دواړه چینلونه جوین کړئ:",
@@ -408,8 +452,6 @@ TEXTS = {
     "en": {
         "choose_lang": "Choose language:",
         "choose_area": "Please choose a section:",
-        "worker": "👷 Worker",
-        "client": "📢 Client",
         "welcome": "Welcome to EasyEarn Bot",
         "main_menu": "Main Menu",
         "force_join": "Please join both channels first:",
@@ -473,8 +515,8 @@ def lang_keyboard():
 
 def force_join_keyboard(user_id: int):
     rows = []
-    for _, link in FORCE_JOIN_CHANNELS:
-        rows.append([InlineKeyboardButton("📢 Join Channel", url=link)])
+    for username, link in FORCE_JOIN_CHANNELS:
+        rows.append([InlineKeyboardButton(f"📢 {username}", url=link)])
     rows.append([InlineKeyboardButton(t(user_id, "joined_btn"), callback_data="check_force_join")])
     return InlineKeyboardMarkup(rows)
 
@@ -558,7 +600,7 @@ def campaign_list_keyboard(user_id: int, campaigns: list[dict]):
     return InlineKeyboardMarkup(rows)
 
 
-def task_card_keyboard(user_id: int, campaign_id: int, link: str):
+def task_card_keyboard(campaign_id: int, link: str):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 Open", url=link)],
         [InlineKeyboardButton("✅ Verify", callback_data=f"verify_campaign_{campaign_id}")],
@@ -571,7 +613,7 @@ def task_card_keyboard(user_id: int, campaign_id: int, link: str):
 # =========================
 async def check_join(bot, chat_username: str, user_id: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id=chat_username, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=chat_username, user_id=int(user_id))
         return member.status in ("member", "administrator", "creator", "owner")
     except Exception as e:
         logger.info("Join check failed for %s -> %s: %s", chat_username, user_id, e)
@@ -592,12 +634,9 @@ async def process_user_leave_penalties(bot, user_id: int) -> tuple[int, int]:
         SELECT uc.id, uc.owner_user_id, uc.reward_afn, uc.campaign_id, c.chat_username
         FROM user_campaigns uc
         JOIN campaigns c ON uc.campaign_id = c.id
-        WHERE uc.user_id = %s
-          AND uc.status = 'completed'
-          AND uc.penalty_applied = 0
-          AND uc.reward_given = 1
+        WHERE uc.user_id = %s AND uc.status = 'completed' AND uc.penalty_applied = 0 AND uc.reward_given = 1
         """,
-        (user_id,),
+        (int(user_id),),
     )
 
     total_penalty = 0
@@ -657,14 +696,34 @@ async def periodic_leave_check(context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# PROMO POST
+# PROMO TO ALL CHATS BOT IS ADMIN IN
 # =========================
+async def track_bot_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if not chat:
+        return
+
+    member_update = update.my_chat_member
+    if not member_update:
+        return
+
+    new_status = member_update.new_chat_member.status
+    title = chat.title or chat.username or str(chat.id)
+
+    # Save chat if bot is in chat with useful permissions/state
+    if new_status in ("administrator", "member"):
+        save_promo_chat(chat.id, title, chat.type)
+    elif new_status in ("left", "kicked"):
+        deactivate_promo_chat(chat.id)
+
+
 async def daily_promo_post(context: ContextTypes.DEFAULT_TYPE):
-    for username, _ in FORCE_JOIN_CHANNELS:
+    chats = fetch_all("SELECT chat_id FROM promo_chats WHERE is_active = 1 ORDER BY created_at ASC")
+    for c in chats:
         try:
-            await context.bot.send_message(chat_id=username, text=PROMO_MESSAGE)
-        except Exception:
-            pass
+            await context.bot.send_message(chat_id=c["chat_id"], text=PROMO_MESSAGE)
+        except Exception as e:
+            logger.info("Promo post failed for %s: %s", c["chat_id"], e)
 
 
 # =========================
@@ -692,7 +751,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 referrer_id = int(arg.split("_", 1)[1])
                 row = get_user(user.id)
                 if row and not row.get("referrer_id") and referrer_id != user.id:
-                    execute("UPDATE users SET referrer_id = %s WHERE user_id = %s", (referrer_id, user.id))
+                    execute("UPDATE users SET referrer_id = %s WHERE user_id = %s", (referrer_id, int(user.id)))
             except Exception:
                 pass
 
@@ -719,7 +778,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user = query.from_user
-    ensure_user(user.id, user.username or "", user.full_name or "")
+    ensure_user(int(user.id), user.username or "", user.full_name or "")
     data = query.data
 
     if data == "lang_ps":
@@ -791,7 +850,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         cleared, added = add_reward_with_debt_clear(user.id, DAILY_BONUS_AFN)
-        execute("UPDATE users SET last_bonus_at = %s WHERE user_id = %s", (now_iso(), user.id))
+        execute("UPDATE users SET last_bonus_at = %s WHERE user_id = %s", (now_iso(), int(user.id)))
         await query.edit_message_text(
             t(user.id, "bonus_added") + f"\nقرض خلاص: {cleared} AFN\nاضافه: {added} AFN",
             reply_markup=worker_menu(user.id),
@@ -816,7 +875,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
               )
             ORDER BY id DESC
             """,
-            (user.id,),
+            (int(user.id),),
         )
         if not campaigns:
             await query.edit_message_text(t(user.id, "tasks_empty"), reply_markup=worker_menu(user.id))
@@ -832,7 +891,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = c["title_ps"] if user_lang(user.id) == "ps" else c["title_en"]
         await query.edit_message_text(
             f"{title}\n\n💰 Reward: {c['reward_afn']} AFN",
-            reply_markup=task_card_keyboard(user.id, campaign_id, c["link"]),
+            reply_markup=task_card_keyboard(campaign_id, c["link"]),
         )
         return
 
@@ -844,7 +903,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         existing = fetch_one(
             "SELECT * FROM user_campaigns WHERE user_id = %s AND campaign_id = %s",
-            (user.id, campaign_id),
+            (int(user.id), campaign_id),
         )
         if existing:
             await query.edit_message_text(t(user.id, "task_already"), reply_markup=worker_menu(user.id))
@@ -870,7 +929,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             INSERT INTO user_campaigns (user_id, campaign_id, reward_given, penalty_applied, owner_user_id, reward_afn, status, created_at, last_checked_at)
             VALUES (%s, %s, 1, 0, %s, %s, 'completed', %s, %s)
             """,
-            (user.id, campaign_id, owner_id, reward, now_iso(), now_iso()),
+            (int(user.id), campaign_id, int(owner_id), reward, now_iso(), now_iso()),
         )
         execute("UPDATE campaigns SET completed_count = completed_count + 1 WHERE id = %s", (campaign_id,))
 
@@ -881,9 +940,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "worker_withdraw":
+        context.user_data.clear()
         context.user_data["flow"] = "withdraw"
         context.user_data["withdraw_step"] = "amount"
-        await query.message.reply_text(t(user.id, "withdraw_ask_amount"))
+        msg = await query.message.reply_text(t(user.id, "withdraw_ask_amount"))
+        remember_prompt_message(context, msg.message_id)
         return
 
     if data == "client_balance":
@@ -905,7 +966,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         cleared, added = add_reward_with_debt_clear(user.id, DAILY_BONUS_AFN)
-        execute("UPDATE users SET last_bonus_at = %s WHERE user_id = %s", (now_iso(), user.id))
+        execute("UPDATE users SET last_bonus_at = %s WHERE user_id = %s", (now_iso(), int(user.id)))
         await query.edit_message_text(
             t(user.id, "bonus_added") + f"\nقرض خلاص: {cleared} AFN\nاضافه: {added} AFN",
             reply_markup=client_menu(user.id),
@@ -924,27 +985,36 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "deposit_method_hesab":
+        context.user_data.clear()
         context.user_data["flow"] = "deposit"
         context.user_data["deposit_step"] = "amount"
         context.user_data["deposit_method"] = "hesab"
-        await query.message.reply_text(t(user.id, "deposit_hesab_info", number=HESAB_PAY))
-        await query.message.reply_text(t(user.id, "deposit_amount_prompt"))
+        msg1 = await query.message.reply_text(t(user.id, "deposit_hesab_info", number=HESAB_PAY))
+        msg2 = await query.message.reply_text(t(user.id, "deposit_amount_prompt"))
+        remember_prompt_message(context, msg1.message_id)
+        remember_prompt_message(context, msg2.message_id)
         return
 
     if data == "deposit_method_atoma":
+        context.user_data.clear()
         context.user_data["flow"] = "deposit"
         context.user_data["deposit_step"] = "amount"
         context.user_data["deposit_method"] = "atoma"
-        await query.message.reply_text(t(user.id, "deposit_atoma_info", number=ATOMA_PAY))
-        await query.message.reply_text(t(user.id, "deposit_amount_prompt"))
+        msg1 = await query.message.reply_text(t(user.id, "deposit_atoma_info", number=ATOMA_PAY))
+        msg2 = await query.message.reply_text(t(user.id, "deposit_amount_prompt"))
+        remember_prompt_message(context, msg1.message_id)
+        remember_prompt_message(context, msg2.message_id)
         return
 
     if data == "deposit_method_binance":
+        context.user_data.clear()
         context.user_data["flow"] = "deposit"
         context.user_data["deposit_step"] = "amount"
         context.user_data["deposit_method"] = "binance"
-        await query.message.reply_text(t(user.id, "deposit_binance_info", uid=BINANCE_UID))
-        await query.message.reply_text("USDT amount ولیکئ:")
+        msg1 = await query.message.reply_text(t(user.id, "deposit_binance_info", uid=BINANCE_UID))
+        msg2 = await query.message.reply_text("USDT amount ولیکئ:")
+        remember_prompt_message(context, msg1.message_id)
+        remember_prompt_message(context, msg2.message_id)
         return
 
     if data == "client_add_task":
@@ -955,21 +1025,25 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "task_type_channel":
+        context.user_data.clear()
         context.user_data["flow"] = "create_campaign"
         context.user_data["campaign_type"] = "channel"
         context.user_data["campaign_step"] = "link"
-        await query.message.reply_text(t(user.id, "task_guide"))
+        msg = await query.message.reply_text(t(user.id, "task_guide"))
+        remember_prompt_message(context, msg.message_id)
         return
 
     if data == "task_type_group":
+        context.user_data.clear()
         context.user_data["flow"] = "create_campaign"
         context.user_data["campaign_type"] = "group"
         context.user_data["campaign_step"] = "link"
-        await query.message.reply_text(t(user.id, "task_guide"))
+        msg = await query.message.reply_text(t(user.id, "task_guide"))
+        remember_prompt_message(context, msg.message_id)
         return
 
     if data == "client_campaigns":
-        rows = fetch_all("SELECT * FROM campaigns WHERE owner_user_id = %s ORDER BY id DESC", (user.id,))
+        rows = fetch_all("SELECT * FROM campaigns WHERE owner_user_id = %s ORDER BY id DESC", (int(user.id),))
         if not rows:
             await query.edit_message_text(t(user.id, "campaigns_empty"), reply_markup=client_menu(user.id))
             return
@@ -991,9 +1065,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if dep["method"] == "binance":
             usdt_amount = float(dep.get("usdt_amount") or 0)
             add_amount = int(usdt_amount * USDT_RATE_AFN)
-            fee_amount = 0
         else:
-            add_amount, fee_amount = deposit_fee(int(dep["amount"]))
+            add_amount, _fee_amount = deposit_fee(int(dep["amount"]))
 
         add_balance(dep["user_id"], add_amount)
         execute("UPDATE deposits SET status = 'approved' WHERE id = %s", (dep_id,))
@@ -1107,8 +1180,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    ensure_user(user.id, user.username or "", user.full_name or "")
-    text = (update.message.text or "").strip()
+    if not user:
+        return
+
+    ensure_user(int(user.id), user.username or "", user.full_name or "")
+
+    text = (update.message.text or "").strip() if update.message and update.message.text else ""
 
     # quick text menu support
     if text in ("/balance", "💰 زما بیلانس", "💰 My Balance"):
@@ -1123,7 +1200,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
               AND id NOT IN (SELECT campaign_id FROM user_campaigns WHERE user_id = %s)
             ORDER BY id DESC
             """,
-            (user.id,),
+            (int(user.id),),
         )
         if not campaigns:
             await update.message.reply_text(t(user.id, "tasks_empty"))
@@ -1153,19 +1230,25 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             context.user_data["withdraw_amount"] = amount
             context.user_data["withdraw_step"] = "name"
-            await update.message.reply_text(t(user.id, "withdraw_ask_name"))
+            msg = await update.message.reply_text(t(user.id, "withdraw_ask_name"))
+            remember_prompt_message(context, msg.message_id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             return
 
         if step == "name":
             context.user_data["withdraw_name"] = text
             context.user_data["withdraw_step"] = "phone"
-            await update.message.reply_text(t(user.id, "withdraw_ask_phone"))
+            msg = await update.message.reply_text(t(user.id, "withdraw_ask_phone"))
+            remember_prompt_message(context, msg.message_id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             return
 
         if step == "phone":
             context.user_data["withdraw_phone"] = text
             context.user_data["withdraw_step"] = "network"
-            await update.message.reply_text(t(user.id, "withdraw_ask_network"))
+            msg = await update.message.reply_text(t(user.id, "withdraw_ask_network"))
+            remember_prompt_message(context, msg.message_id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             return
 
         if step == "network":
@@ -1181,7 +1264,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES (%s, %s, %s, %s, %s, 'pending', %s)
                 RETURNING id
                 """,
-                (user.id, amount, network, phone, full_name, now_iso()),
+                (int(user.id), amount, network, phone, full_name, now_iso()),
                 returning=True,
             )
             wd_id = wd["id"]
@@ -1223,6 +1306,8 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (channel_msg.message_id, wd_id))
+            await clear_prompt_messages(context, update.effective_chat.id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             await update.message.reply_text(t(user.id, "withdraw_sent"))
             context.user_data.clear()
             return
@@ -1251,7 +1336,9 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Enter a valid amount")
                 return
             context.user_data["deposit_step"] = "proof"
-            await update.message.reply_text(t(user.id, "deposit_proof_prompt"))
+            msg = await update.message.reply_text(t(user.id, "deposit_proof_prompt"))
+            remember_prompt_message(context, msg.message_id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             return
 
         if step == "proof":
@@ -1269,7 +1356,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES (%s, %s, %s, %s, %s, 'pending', %s)
                 RETURNING id
                 """,
-                (user.id, amount, method, proof_file_id, usdt_amount, now_iso()),
+                (int(user.id), amount, method, proof_file_id, usdt_amount, now_iso()),
                 returning=True,
             )
             dep_id = dep["id"]
@@ -1319,6 +1406,8 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(chat_id=ADMIN_ID, photo=proof_file_id, caption=caption, reply_markup=buttons_markup)
             channel_msg = await context.bot.send_message(chat_id=PAYMENT_CHANNEL, text=channel_text)
             execute("UPDATE deposits SET channel_message_id = %s WHERE id = %s", (channel_msg.message_id, dep_id))
+            await clear_prompt_messages(context, update.effective_chat.id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             await update.message.reply_text(t(user.id, "deposit_sent"))
             context.user_data.clear()
             return
@@ -1336,7 +1425,9 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["campaign_link"] = link
             context.user_data["campaign_chat_username"] = chat_username
             context.user_data["campaign_step"] = "title"
-            await update.message.reply_text(t(user.id, "ask_title"))
+            msg = await update.message.reply_text(t(user.id, "ask_title"))
+            remember_prompt_message(context, msg.message_id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             return
 
         if step == "title":
@@ -1348,7 +1439,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 INSERT INTO campaigns (owner_user_id, title_ps, title_en, reward_afn, target_type, link, channel_title, chat_username, status, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
                 """,
-                (user.id, f"{title} جوین کړئ", f"Join {title}", TASK_REWARD_AFN, campaign_type, link, title, chat_username, now_iso()),
+                (int(user.id), f"{title} جوین کړئ", f"Join {title}", TASK_REWARD_AFN, campaign_type, link, title, chat_username, now_iso()),
             )
             users = fetch_all("SELECT user_id FROM users")
             for u in users:
@@ -1356,6 +1447,8 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=u["user_id"], text=t(u["user_id"], "new_task_broadcast"))
                 except Exception:
                     pass
+            await clear_prompt_messages(context, update.effective_chat.id)
+            await safe_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
             await update.message.reply_text(t(user.id, "campaign_created"))
             context.user_data.clear()
             return
@@ -1371,12 +1464,14 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(ChatMemberHandler(track_bot_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, flow_router))
 
-    app.job_queue.run_repeating(periodic_leave_check, interval=AUTO_LEAVE_PENALTY_CHECK_HOURS * 3600, first=300)
-    app.job_queue.run_repeating(daily_promo_post, interval=86400, first=60)
+    if app.job_queue:
+        app.job_queue.run_repeating(periodic_leave_check, interval=AUTO_LEAVE_PENALTY_CHECK_HOURS * 3600, first=300)
+        app.job_queue.run_repeating(daily_promo_post, interval=PROMO_POST_INTERVAL_HOURS * 3600, first=600)
 
-    logger.info("EasyEarn full pro bot is running...")
+    logger.info("EasyEarn final bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 
