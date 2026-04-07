@@ -497,8 +497,10 @@ async def process_leave_penalties(bot, user_id: int):
             execute("UPDATE user_tasks SET last_checked_at = %s WHERE id = %s", (now_iso(), row["id"]))
             continue
         add_stars(user_id, -float(row["rewarded_stars"]))
-        execute("UPDATE user_tasks SET reward_removed = 1, status = 'left', last_checked_at = %s WHERE id = %s", (now_iso(), row["id"]),))
-
+        execute(
+    "UPDATE user_tasks SET reward_removed = 1, status = 'left', last_checked_at = %s WHERE id = %s",
+    (now_iso(), row["id"]),
+    )
 
 async def periodic_leave_check(context: ContextTypes.DEFAULT_TYPE):
     for row in fetch_all("SELECT user_id FROM users"):
