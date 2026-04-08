@@ -21,7 +21,7 @@ from telegram.ext import (
 # CONFIG
 # =====================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6606105699"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "1347546821"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "EasyEarnAppBot")
 PAYMENT_CHANNEL = os.getenv("PAYMENT_CHANNEL", "@easyearnpayments")
