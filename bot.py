@@ -667,8 +667,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_stars(user.id, -amount)
         
         wd = execute(
-         "INSERT INTO withdrawals (user_id, amount_stars, status, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-            (int(user.id), amount, "pending", now_iso()),
+         "INSERT INTO withdrawals (user_id, amount, amount_stars, status, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+(int(user.id), amount, amount, "pending", now_iso()),
     
     
          returning=True,
