@@ -171,19 +171,21 @@ def init_db():
     )
 
     execute(
-        """
-        CREATE TABLE IF NOT EXISTS withdrawals (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
-            amount_stars NUMERIC(12,2) NOT NULL,
-            status TEXT DEFAULT 'pending',
-            channel_message_id BIGINT,
-            created_at TEXT,
-            completed_at TEXT
-        )
-        """
+    """
+    CREATE TABLE IF NOT EXISTS withdrawals (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        amount_stars NUMERIC(12,2) NOT NULL,
+        status TEXT DEFAULT 'pending',
+        channel_message_id BIGINT,
+        created_at TEXT,
+        completed_at TEXT
     )
+    """
+)
 
+# FIX
+safe_exec("ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS amount_stars NUMERIC(12,2)")
     execute(
         """
         CREATE TABLE IF NOT EXISTS promo_chats (
