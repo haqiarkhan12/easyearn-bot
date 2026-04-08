@@ -35,7 +35,6 @@ FORCE_JOIN_CHANNELS = [
 
 REFERRAL_REWARD_STARS = 1.25
 DAILY_BONUS_STARS = 1.0
-DEFAULT_TASK_REWARD_STARS = 0.5
 WITHDRAW_OPTIONS = [15.0, 25.0, 50.0]
 BONUS_INTERVAL_HOURS = 24
 PROMO_INTERVAL_HOURS = 24
@@ -43,11 +42,13 @@ LEAVE_CHECK_INTERVAL_HOURS = 2
 
 PROMO_TEXT = (
     "📢 زمونږ خدمات\n\n"
-    "⭐ Telegram Stars\n"
-    "📢 Channel Promotion\n"
-    "⚡ Fast & Trusted Service\n"
-    "🎁 Daily Bonus & Referral System\n\n"
-    f"📞 Support: {SUPPORT_USERNAME}"
+    "⭐ د تلیګرام ستوري\n"
+    "📢 د چینل او پیج پروموشن\n"
+    "⚡ چټک او باوري خدمات\n\n"
+    "📢 زموږ چینلونه:\n"
+    "🔗 https://t.me/haqyarserviceso1\n"
+    "🔗 https://t.me/designskills211\n\n"
+    f"📞 سپورټ: {SUPPORT_USERNAME}"
 )
 
 if not BOT_TOKEN:
@@ -111,12 +112,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def now_pretty_from_iso(value: Optional[str] = None) -> str:
+def now_pretty(value: Optional[str] = None) -> str:
     try:
-        if value:
-            dt = datetime.fromisoformat(value)
-        else:
-            dt = datetime.now()
+        dt = datetime.fromisoformat(value) if value else datetime.now()
         try:
             return dt.strftime("%-d %b %Y, %-I:%M:%S %p")
         except Exception:
@@ -198,7 +196,6 @@ def init_db():
         """
     )
 
-    # Older DB migration helpers
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ps'")
@@ -208,7 +205,7 @@ def init_db():
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at TEXT")
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT")
 
-    # Convert old AFN balance to stars if old balance column exists
+    # old AFN balance => stars (10 AFN = 5 Stars)
     try:
         execute(
             """
@@ -222,7 +219,6 @@ def init_db():
     except Exception as e:
         logger.info("old balance migration skipped: %s", e)
 
-    # Ensure admin account exists and has enough stars
     admin = fetch_one("SELECT * FROM users WHERE user_id = %s", (ADMIN_ID,))
     if not admin:
         execute(
@@ -290,7 +286,7 @@ def referral_count(user_id: int) -> int:
     return int(row["c"]) if row else 0
 
 
-def top_referrals(limit: int = 20) -> list[dict]:
+def top_referrals(limit: int = 50) -> list[dict]:
     return fetch_all(
         "SELECT referrer_id, COUNT(*) AS refs FROM users WHERE referrer_id IS NOT NULL GROUP BY referrer_id ORDER BY refs DESC LIMIT %s",
         (limit,),
@@ -352,7 +348,7 @@ TEXTS = {
         "joined_btn": "✅ جوین مې کړل",
         "join_failed": "اول دواړه چینلونه جوین کړئ.",
         "my_stars": "⭐ ستاسو ستوري: {stars}",
-        "referral": "👥 ستاسو ریفرل لینک:\n{link}\n\nټول ریفرلونه: {count}",
+        "referral": "👥 ستاسو ریفرل لینک:\n{link}\n\nهر ریفرل په سر تاسو 1.25 ستوري ترلاسه کوئ.\nجعلي ریفرل نه منل کیږي، که وپیژندل شي ستاسو اکاونټ به بند شي.\n\nټول ریفرلونه: {count}",
         "tasks_empty": "فعلاً ټاسک نشته.",
         "task_done": "✅ ټاسک بشپړ شو.\n⭐ +{stars} ستوري اضافه شول.",
         "task_already": "تاسو دا ټاسک مخکې بشپړ کړی.",
@@ -368,13 +364,14 @@ TEXTS = {
         "new_task": "📢 نوی ټاسک اضافه شو!\n⭐ Reward: {reward}",
         "stats_admin": "👥 ټول یوزران: {users}\n🆕 د نن یوزران: {today}\n⭐ د ټولو یوزرانو Stars: {stars}\n⭐ د اډمین Stars: {admin_stars}\n📝 فعال ټاسکونه: {tasks}",
         "admin_only": "دا برخه یوازې اډمین ته ده.",
-        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance",
+        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance\n/taskslist\n/taskstats\n/removetask",
         "broadcast_prompt": "هغه مسج ولیکئ چې ټولو users ته ولاړ شي.",
         "addtask_link": "د چینل لینک یا @username راولېږئ.",
         "addtask_title": "د چینل عنوان راولېږئ.",
         "addtask_reward": "ریوارډ ولیکئ، مثال: 0.5",
         "addbalance_prompt": "هغه stars ولیکئ چې اډمین بیلانس ته اضافه شي. مثال: 1000",
         "addbalance_done": "✅ اډمین بیلانس {amount} stars سره زیات شو.\n⭐ نوی بیلانس: {new_balance}",
+        "withdraw_failed": "Withdraw request failed. Check ADMIN_ID or channel permissions.",
     },
     "en": {
         "choose_lang": "Choose language:",
@@ -383,7 +380,7 @@ TEXTS = {
         "joined_btn": "✅ I Joined",
         "join_failed": "Please join both channels first.",
         "my_stars": "⭐ Your stars: {stars}",
-        "referral": "👥 Your referral link:\n{link}\n\nTotal referrals: {count}",
+        "referral": "👥 Your referral link:\n{link}\n\nYou earn 1.25 stars per referral. Fake referrals are not accepted. If detected, your account may be banned.\n\nTotal referrals: {count}",
         "tasks_empty": "No tasks available.",
         "task_done": "✅ Task completed.\n⭐ +{stars} stars added.",
         "task_already": "You already completed this task.",
@@ -399,13 +396,14 @@ TEXTS = {
         "new_task": "📢 New task added!\n⭐ Reward: {reward}",
         "stats_admin": "👥 Total users: {users}\n🆕 Today users: {today}\n⭐ Total user stars: {stars}\n⭐ Admin stars: {admin_stars}\n📝 Active tasks: {tasks}",
         "admin_only": "This section is admin only.",
-        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance",
+        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance\n/taskslist\n/taskstats\n/removetask",
         "broadcast_prompt": "Send the message you want to broadcast.",
         "addtask_link": "Send channel link or @username.",
         "addtask_title": "Send channel title.",
         "addtask_reward": "Send reward, example: 0.5",
         "addbalance_prompt": "Send stars amount to add to admin balance. Example: 1000",
         "addbalance_done": "✅ Admin balance increased by {amount} stars.\n⭐ New balance: {new_balance}",
+        "withdraw_failed": "Withdraw request failed. Check ADMIN_ID or channel permissions.",
     },
 }
 
@@ -434,6 +432,7 @@ def lang_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🇦🇫 پښتو", callback_data="lang_ps")],
         [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="back_main")],
     ])
 
 
@@ -449,6 +448,7 @@ def task_keyboard(task_id: int, link: str):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 Open", url=link)],
         [InlineKeyboardButton("✅ Verify", callback_data=f"verify_task_{task_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="back_main")],
     ])
 
 
@@ -456,7 +456,17 @@ def withdraw_keyboard():
     rows = []
     for amount in WITHDRAW_OPTIONS:
         rows.append([InlineKeyboardButton(f"⭐ {amount:g} Stars", callback_data=f"withdraw_{amount}")])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
+
+
+def withdraw_admin_keyboard(wd_id: int):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}"),
+        ]
+    ])
 
 
 # =====================================
@@ -595,6 +605,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
         return
 
+    if data == "back_main":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
+        return
+
     if data.startswith("verify_task_"):
         task_id = int(data.split("_")[-1])
         task = get_task(task_id)
@@ -647,31 +665,32 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {user.id}\n"
             f"💰 Amount: {amount:g} Star ⭐\n"
-            f"🕒 Time: {now_pretty_from_iso()}\n\n"
+            f"🕒 Time: {now_pretty()}\n\n"
             "⏳ Status: Pending"
         )
-        admin_buttons = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}"),
-            ]
-        ])
 
+        admin_ok = False
         try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=message_text, reply_markup=admin_buttons)
+            await context.bot.send_message(chat_id=ADMIN_ID, text=message_text, reply_markup=withdraw_admin_keyboard(wd_id))
+            admin_ok = True
         except Exception as e:
-            add_stars(user.id, amount)
-            await query.message.reply_text(f"Admin send error: {e}", reply_markup=main_menu(user.id))
-            return
+            logger.info("admin withdraw send failed: %s", e)
 
+        channel_message_id = None
         try:
             channel_msg = await context.bot.send_message(chat_id=PAYMENT_CHANNEL, text=message_text)
+            channel_message_id = channel_msg.message_id
         except Exception as e:
+            logger.info("channel withdraw send failed: %s", e)
+
+        if not admin_ok and not channel_message_id:
             add_stars(user.id, amount)
-            await query.message.reply_text(f"Channel send error: {e}", reply_markup=main_menu(user.id))
+            await query.message.reply_text(t(user.id, "withdraw_failed"), reply_markup=main_menu(user.id))
             return
 
-        execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (channel_msg.message_id, wd_id))
+        if channel_message_id:
+            execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (channel_message_id, wd_id))
+
         await query.message.reply_text(t(user.id, "withdraw_sent"), reply_markup=main_menu(user.id))
         return
 
@@ -690,7 +709,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {wd['user_id']}\n"
             f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty_from_iso(wd.get('created_at'))}\n\n"
+            f"🕒 Time: {now_pretty(wd.get('created_at'))}\n\n"
             "✅ Status: Successful ✅"
         )
         if wd.get("channel_message_id"):
@@ -720,7 +739,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {wd['user_id']}\n"
             f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty_from_iso(wd.get('created_at'))}\n\n"
+            f"🕒 Time: {now_pretty(wd.get('created_at'))}\n\n"
             "❌ Status: Rejected"
         )
         if wd.get("channel_message_id"):
@@ -880,9 +899,12 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
-    rows = fetch_all("SELECT user_id, username, stars FROM users ORDER BY created_at DESC LIMIT 100")
-    text = "\n".join([f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g}" for r in rows]) or "No users"
-    await update.message.reply_text(text)
+    rows = fetch_all("SELECT user_id, username, stars, referrer_id FROM users ORDER BY created_at DESC LIMIT 100")
+    lines = []
+    for r in rows:
+        ref_by = r.get("referrer_id") or "-"
+        lines.append(f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g} | ref_by: {ref_by}")
+    await update.message.reply_text("\n".join(lines) or "No users")
 
 
 async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -891,7 +913,7 @@ async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
-    rows = top_referrals(20)
+    rows = top_referrals(50)
     if not rows:
         await update.message.reply_text("No referrals yet")
         return
@@ -932,6 +954,55 @@ async def admin_botstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Total User Stars: {float(total_stars['s']) if total_stars else 0:g}\n"
         f"Admin Stars: {get_stars(ADMIN_ID):g}"
     )
+
+
+async def admin_taskslist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_private(update):
+        return
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(t(update.effective_user.id, "admin_only"))
+        return
+    rows = fetch_all("SELECT id, channel_title, reward_stars, status FROM tasks ORDER BY id DESC LIMIT 100")
+    text = "\n".join([f"#{r['id']} | {r['channel_title']} | ⭐ {float(r['reward_stars']):g} | {r['status']}" for r in rows]) or "No tasks"
+    await update.message.reply_text(text)
+
+
+async def admin_taskstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_private(update):
+        return
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(t(update.effective_user.id, "admin_only"))
+        return
+    rows = fetch_all(
+        """
+        SELECT t.id, t.channel_title, t.status, COUNT(ut.id) AS joined_count
+        FROM tasks t
+        LEFT JOIN user_tasks ut ON ut.task_id = t.id AND ut.reward_removed = 0
+        GROUP BY t.id, t.channel_title, t.status
+        ORDER BY t.id DESC
+        LIMIT 100
+        """
+    )
+    text = "\n".join([f"#{r['id']} | {r['channel_title']} | joins: {r['joined_count']} | {r['status']}" for r in rows]) or "No task stats"
+    await update.message.reply_text(text)
+
+
+async def admin_removetask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_private(update):
+        return
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(t(update.effective_user.id, "admin_only"))
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /removetask TASK_ID")
+        return
+    try:
+        task_id = int(context.args[0])
+    except Exception:
+        await update.message.reply_text("Invalid task id")
+        return
+    execute("UPDATE tasks SET status = 'removed' WHERE id = %s", (task_id,))
+    await update.message.reply_text(f"✅ Task #{task_id} removed")
 
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1053,6 +1124,9 @@ def main():
     app.add_handler(CommandHandler("refstats", admin_refstats))
     app.add_handler(CommandHandler("withdraws", admin_withdraws))
     app.add_handler(CommandHandler("botstats", admin_botstats))
+    app.add_handler(CommandHandler("taskslist", admin_taskslist))
+    app.add_handler(CommandHandler("taskstats", admin_taskstats))
+    app.add_handler(CommandHandler("removetask", admin_removetask))
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("addtask", admin_addtask))
     app.add_handler(CommandHandler("addbalance", admin_addbalance))
