@@ -664,11 +664,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         add_stars(user.id, -amount)
+        
         wd = execute(
-            "INSERT INTO withdrawals (user_id, amount_stars, status, created_at) VALUES (%s, %s, 'pending', %s) RETURNING id",
-            (int(user.id), amount, now_iso()),
-            returning=True,
+         "INSERT INTO withdrawals (user_id, amount_stars, status, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
+         (int(user.id), amount, "pending", now_iso()),
+         returning=True,
         )
+        
         wd_id = wd["id"]
         username = f"@{user.username}" if user.username else (user.full_name or "NoUsername")
         message_text = (
