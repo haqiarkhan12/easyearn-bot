@@ -47,7 +47,7 @@ PROMO_TEXT = (
     "⚡ چټک او باوري خدمات\n\n"
     "📢 زموږ چینلونه:\n"
     "🔗 https://t.me/haqyarserviceso1\n"
-    "🔗 https://t.me/designskills211\n\n"
+    "🔗 https://t.me/Solutions3232\n\n"
     f"📞 سپورټ: {SUPPORT_USERNAME}"
 )
 
@@ -205,7 +205,6 @@ def init_db():
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at TEXT")
     safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT")
 
-    # old AFN balance => stars (10 AFN = 5 Stars)
     try:
         execute(
             """
@@ -359,6 +358,7 @@ TEXTS = {
         "withdraw_low": "ستاسو ستوري کم دي.",
         "admin_low": "د اډمین ستوري کم دي. وروسته بیا هڅه وکړئ.",
         "withdraw_sent": "✅ ستاسو د ویډرا غوښتنه ثبت شوه.",
+        "withdraw_failed": "ویډرا ونه لېږل شوه. ADMIN_ID او د چینل permissions وګورئ.",
         "about": "ℹ️ زمونږ په اړه\n\nزمونږ بوټ د Telegram Stars earning لپاره جوړ شوی. تاسو د ټاسکونو، ورځني بونس او ریفرلونو له لارې Stars ترلاسه کوئ.",
         "support": "📞 سپورټ\n\nمهرباني وکړئ دې یوزرنیم ته مسج وکړئ:\n{username}",
         "new_task": "📢 نوی ټاسک اضافه شو!\n⭐ Reward: {reward}",
@@ -371,7 +371,8 @@ TEXTS = {
         "addtask_reward": "ریوارډ ولیکئ، مثال: 0.5",
         "addbalance_prompt": "هغه stars ولیکئ چې اډمین بیلانس ته اضافه شي. مثال: 1000",
         "addbalance_done": "✅ اډمین بیلانس {amount} stars سره زیات شو.\n⭐ نوی بیلانس: {new_balance}",
-        "withdraw_failed": "Withdraw request failed. Check ADMIN_ID or channel permissions.",
+        "removetask_prompt": "د لرې کولو لپاره Task ID راولېږئ. مثال: 5",
+        "cancelled": "❌ عمل لغوه شو.",
     },
     "en": {
         "choose_lang": "Choose language:",
@@ -391,6 +392,7 @@ TEXTS = {
         "withdraw_low": "You do not have enough stars.",
         "admin_low": "Admin balance is low. Try again later.",
         "withdraw_sent": "✅ Your withdraw request was submitted.",
+        "withdraw_failed": "Withdraw request failed. Check ADMIN_ID and channel permissions.",
         "about": "ℹ️ About Us\n\nOur bot is built for Telegram Stars earning. Complete tasks, earn stars, bonuses, and referrals.",
         "support": "📞 Support\n\nPlease message:\n{username}",
         "new_task": "📢 New task added!\n⭐ Reward: {reward}",
@@ -403,7 +405,8 @@ TEXTS = {
         "addtask_reward": "Send reward, example: 0.5",
         "addbalance_prompt": "Send stars amount to add to admin balance. Example: 1000",
         "addbalance_done": "✅ Admin balance increased by {amount} stars.\n⭐ New balance: {new_balance}",
-        "withdraw_failed": "Withdraw request failed. Check ADMIN_ID or channel permissions.",
+        "removetask_prompt": "Send Task ID to remove. Example: 5",
+        "cancelled": "❌ Action cancelled.",
     },
 }
 
@@ -424,8 +427,13 @@ def main_menu(user_id: int):
     ]
     if int(user_id) == ADMIN_ID:
         keyboard.insert(0, ["📊 Statistics", "📣 Broadcast"])
-        keyboard.insert(1, ["🛠 Add Task", "➕ Add Balance"])
+        keyboard.insert(1, ["🛠 Add Task", "🗑 Remove Task"])
+        keyboard.insert(2, ["➕ Add Balance"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def cancel_reply_keyboard(user_id: int):
+    return ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
 
 
 def lang_keyboard():
@@ -541,13 +549,14 @@ async def periodic_leave_check(context: ContextTypes.DEFAULT_TYPE):
 
 
 # =====================================
-# START / LANGUAGE
+# START / CALLBACKS
 # =====================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
         return
     user = update.effective_user
     ensure_user(int(user.id), user.username or "", user.full_name or "")
+    context.user_data.pop("admin_flow", None)
 
     if context.args:
         arg = context.args[0]
@@ -685,6 +694,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not admin_ok and not channel_message_id:
             add_stars(user.id, amount)
+            execute("UPDATE withdrawals SET status = 'failed' WHERE id = %s", (wd_id,))
             await query.message.reply_text(t(user.id, "withdraw_failed"), reply_markup=main_menu(user.id))
             return
 
@@ -800,7 +810,7 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(t(user.id, "admin_only"), reply_markup=main_menu(user.id))
             return
         context.user_data["admin_flow"] = "broadcast"
-        await update.message.reply_text(t(user.id, "broadcast_prompt"), reply_markup=main_menu(user.id))
+        await update.message.reply_text(t(user.id, "broadcast_prompt"), reply_markup=cancel_reply_keyboard(user.id))
         return
 
     if text == "🛠 Add Task":
@@ -808,7 +818,15 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(t(user.id, "admin_only"), reply_markup=main_menu(user.id))
             return
         context.user_data["admin_flow"] = "addtask_link"
-        await update.message.reply_text(t(user.id, "addtask_link"), reply_markup=main_menu(user.id))
+        await update.message.reply_text(t(user.id, "addtask_link"), reply_markup=cancel_reply_keyboard(user.id))
+        return
+
+    if text == "🗑 Remove Task":
+        if user.id != ADMIN_ID:
+            await update.message.reply_text(t(user.id, "admin_only"), reply_markup=main_menu(user.id))
+            return
+        context.user_data["admin_flow"] = "remove_task"
+        await update.message.reply_text(t(user.id, "removetask_prompt"), reply_markup=cancel_reply_keyboard(user.id))
         return
 
     if text == "➕ Add Balance":
@@ -816,7 +834,7 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(t(user.id, "admin_only"), reply_markup=main_menu(user.id))
             return
         context.user_data["admin_flow"] = "addbalance"
-        await update.message.reply_text(t(user.id, "addbalance_prompt"), reply_markup=main_menu(user.id))
+        await update.message.reply_text(t(user.id, "addbalance_prompt"), reply_markup=cancel_reply_keyboard(user.id))
         return
 
     if text == "🌐 Language":
@@ -1012,7 +1030,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
     context.user_data["admin_flow"] = "broadcast"
-    await update.message.reply_text(t(update.effective_user.id, "broadcast_prompt"))
+    await update.message.reply_text(t(update.effective_user.id, "broadcast_prompt"), reply_markup=cancel_reply_keyboard(update.effective_user.id))
 
 
 async def admin_addtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1022,7 +1040,7 @@ async def admin_addtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
     context.user_data["admin_flow"] = "addtask_link"
-    await update.message.reply_text(t(update.effective_user.id, "addtask_link"))
+    await update.message.reply_text(t(update.effective_user.id, "addtask_link"), reply_markup=cancel_reply_keyboard(update.effective_user.id))
 
 
 async def admin_addbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1032,7 +1050,7 @@ async def admin_addbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
     context.user_data["admin_flow"] = "addbalance"
-    await update.message.reply_text(t(update.effective_user.id, "addbalance_prompt"))
+    await update.message.reply_text(t(update.effective_user.id, "addbalance_prompt"), reply_markup=cancel_reply_keyboard(update.effective_user.id))
 
 
 async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1045,6 +1063,11 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     text = (update.message.text or "").strip()
 
+    if text.lower() in ("cancel", "/cancel", "❌ cancel", "back", "⬅️ back"):
+        context.user_data.pop("admin_flow", None)
+        await update.message.reply_text(t(update.effective_user.id, "cancelled"), reply_markup=main_menu(update.effective_user.id))
+        return True
+
     if flow == "broadcast":
         users = fetch_all("SELECT user_id FROM users")
         sent = 0
@@ -1056,31 +1079,31 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             except Exception:
                 failed += 1
         context.user_data.pop("admin_flow", None)
-        await update.message.reply_text(f"✅ Sent: {sent}\n❌ Failed: {failed}")
+        await update.message.reply_text(f"✅ Sent: {sent}\n❌ Failed: {failed}", reply_markup=main_menu(update.effective_user.id))
         return True
 
     if flow == "addtask_link":
         username = extract_chat_username(text)
         if not username:
-            await update.message.reply_text("Invalid link. Send public link or @username")
+            await update.message.reply_text("Invalid link. Send public link or @username", reply_markup=cancel_reply_keyboard(update.effective_user.id))
             return True
         context.user_data["task_chat_username"] = username
         context.user_data["task_link"] = text if text.startswith("http") else f"https://t.me/{username[1:]}"
         context.user_data["admin_flow"] = "addtask_title"
-        await update.message.reply_text(t(update.effective_user.id, "addtask_title"))
+        await update.message.reply_text(t(update.effective_user.id, "addtask_title"), reply_markup=cancel_reply_keyboard(update.effective_user.id))
         return True
 
     if flow == "addtask_title":
         context.user_data["task_title"] = text
         context.user_data["admin_flow"] = "addtask_reward"
-        await update.message.reply_text(t(update.effective_user.id, "addtask_reward"))
+        await update.message.reply_text(t(update.effective_user.id, "addtask_reward"), reply_markup=cancel_reply_keyboard(update.effective_user.id))
         return True
 
     if flow == "addtask_reward":
         try:
             reward = float(text)
         except Exception:
-            await update.message.reply_text("Invalid reward. Example: 0.5")
+            await update.message.reply_text("Invalid reward. Example: 0.5", reply_markup=cancel_reply_keyboard(update.effective_user.id))
             return True
         add_task(context.user_data["task_title"], context.user_data["task_chat_username"], context.user_data["task_link"], reward)
         for u in fetch_all("SELECT user_id FROM users"):
@@ -1089,20 +1112,32 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             except Exception:
                 pass
         context.user_data.pop("admin_flow", None)
-        await update.message.reply_text("✅ Task added")
+        await update.message.reply_text("✅ Task added", reply_markup=main_menu(update.effective_user.id))
         return True
 
     if flow == "addbalance":
         try:
             amount = float(text)
         except Exception:
-            await update.message.reply_text("Invalid amount. Example: 1000")
+            await update.message.reply_text("Invalid amount. Example: 1000", reply_markup=cancel_reply_keyboard(update.effective_user.id))
             return True
         add_stars(ADMIN_ID, amount)
         context.user_data.pop("admin_flow", None)
         await update.message.reply_text(
-            t(update.effective_user.id, "addbalance_done", amount=f"{amount:g}", new_balance=f"{get_stars(ADMIN_ID):g}")
+            t(update.effective_user.id, "addbalance_done", amount=f"{amount:g}", new_balance=f"{get_stars(ADMIN_ID):g}"),
+            reply_markup=main_menu(update.effective_user.id),
         )
+        return True
+
+    if flow == "remove_task":
+        try:
+            task_id = int(text)
+        except Exception:
+            await update.message.reply_text("Invalid task id. Example: 5", reply_markup=cancel_reply_keyboard(update.effective_user.id))
+            return True
+        execute("UPDATE tasks SET status = 'removed' WHERE id = %s", (task_id,))
+        context.user_data.pop("admin_flow", None)
+        await update.message.reply_text(f"✅ Task #{task_id} removed", reply_markup=main_menu(update.effective_user.id))
         return True
 
     return False
@@ -1143,7 +1178,7 @@ def main():
         app.job_queue.run_repeating(periodic_leave_check, interval=LEAVE_CHECK_INTERVAL_HOURS * 3600, first=600)
         app.job_queue.run_repeating(daily_promo_post, interval=PROMO_INTERVAL_HOURS * 3600, first=900)
 
-    logger.info("EasyEarn stars final code is running...")
+    logger.info("EasyEarn stars final fixed code is running...")
     app.run_polling(drop_pending_updates=True)
 
 
