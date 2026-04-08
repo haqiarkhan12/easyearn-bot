@@ -26,15 +26,16 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "EasyEarnAppBot")
 PAYMENT_CHANNEL = os.getenv("PAYMENT_CHANNEL", "@easyearnpayments")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@haqiarkhan12")
+ADMIN_START_STARS = float(os.getenv("ADMIN_START_STARS", "100000"))
 
 FORCE_JOIN_CHANNELS = [
     ("@easyearnofficial1222", "https://t.me/easyearnofficial1222"),
     ("@easyearnpayments", "https://t.me/easyearnpayments"),
 ]
 
-AFN_TO_STARS_DIVISOR = 2  # 10 AFN = 5 Stars
 REFERRAL_REWARD_STARS = 1.25
 DAILY_BONUS_STARS = 1.0
+DEFAULT_TASK_REWARD_STARS = 0.5
 WITHDRAW_OPTIONS = [15.0, 25.0, 50.0]
 BONUS_INTERVAL_HOURS = 24
 PROMO_INTERVAL_HOURS = 24
@@ -68,6 +69,17 @@ def db_connect():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
+def execute(query: str, params: tuple = (), returning: bool = False):
+    conn = db_connect()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(query, params)
+    result = cur.fetchone() if returning else None
+    conn.commit()
+    cur.close()
+    conn.close()
+    return dict(result) if result else None
+
+
 def fetch_one(query: str, params: tuple = ()) -> Optional[dict]:
     conn = db_connect()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -88,40 +100,33 @@ def fetch_all(query: str, params: tuple = ()) -> list[dict]:
     return rows
 
 
-def execute(query: str, params: tuple = (), returning: bool = False):
-    conn = db_connect()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute(query, params)
-    result = cur.fetchone() if returning else None
-    conn.commit()
-    cur.close()
-    conn.close()
-    return dict(result) if result else None
+def safe_exec(query: str):
+    try:
+        execute(query)
+    except Exception as e:
+        logger.info("safe exec skipped: %s", e)
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def now_pretty() -> str:
+def now_pretty_from_iso(value: Optional[str] = None) -> str:
     try:
-        return datetime.now().strftime("%-d %b %Y, %-I:%M:%S %p")
+        if value:
+            dt = datetime.fromisoformat(value)
+        else:
+            dt = datetime.now()
+        try:
+            return dt.strftime("%-d %b %Y, %-I:%M:%S %p")
+        except Exception:
+            return dt.strftime("%d %b %Y, %I:%M:%S %p")
     except Exception:
-        return datetime.now().strftime("%d %b %Y, %I:%M:%S %p")
-
-
-def safe_alter(query: str):
-    try:
-        execute(query)
-    except Exception as e:
-        logger.info("safe alter skipped: %s", e)
+        return "Unknown"
 
 
 def init_db():
-    conn = db_connect()
-    cur = conn.cursor()
-
-    cur.execute(
+    execute(
         """
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -137,7 +142,7 @@ def init_db():
         """
     )
 
-    cur.execute(
+    execute(
         """
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
@@ -151,7 +156,7 @@ def init_db():
         """
     )
 
-    cur.execute(
+    execute(
         """
         CREATE TABLE IF NOT EXISTS user_tasks (
             id SERIAL PRIMARY KEY,
@@ -167,7 +172,7 @@ def init_db():
         """
     )
 
-    cur.execute(
+    execute(
         """
         CREATE TABLE IF NOT EXISTS withdrawals (
             id SERIAL PRIMARY KEY,
@@ -181,7 +186,7 @@ def init_db():
         """
     )
 
-    cur.execute(
+    execute(
         """
         CREATE TABLE IF NOT EXISTS promo_chats (
             chat_id BIGINT PRIMARY KEY,
@@ -193,20 +198,17 @@ def init_db():
         """
     )
 
-    conn.commit()
-    cur.close()
-    conn.close()
+    # Older DB migration helpers
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ps'")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars NUMERIC(12,2) DEFAULT 0")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_rewarded INTEGER DEFAULT 0")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at TEXT")
+    safe_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT")
 
-    # Migration helpers
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS stars NUMERIC(12,2) DEFAULT 0")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_rewarded INTEGER DEFAULT 0")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at TEXT")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ps'")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
-    safe_alter("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT")
-
+    # Convert old AFN balance to stars if old balance column exists
     try:
         execute(
             """
@@ -220,10 +222,26 @@ def init_db():
     except Exception as e:
         logger.info("old balance migration skipped: %s", e)
 
+    # Ensure admin account exists and has enough stars
+    admin = fetch_one("SELECT * FROM users WHERE user_id = %s", (ADMIN_ID,))
+    if not admin:
+        execute(
+            "INSERT INTO users (user_id, username, full_name, lang, stars, created_at) VALUES (%s, %s, %s, 'ps', %s, %s)",
+            (ADMIN_ID, "admin", "Admin", ADMIN_START_STARS, now_iso()),
+        )
+    else:
+        current_stars = float(admin.get("stars") or 0)
+        if current_stars < ADMIN_START_STARS:
+            execute("UPDATE users SET stars = %s WHERE user_id = %s", (ADMIN_START_STARS, ADMIN_ID))
+
 
 # =====================================
 # HELPERS
 # =====================================
+def is_private(update: Update) -> bool:
+    return bool(update.effective_chat and update.effective_chat.type == "private")
+
+
 def ensure_user(user_id: int, username: str | None, full_name: str | None) -> None:
     row = fetch_one("SELECT * FROM users WHERE user_id = %s", (int(user_id),))
     if not row:
@@ -246,7 +264,8 @@ def get_lang(user_id: int) -> str:
     row = get_user(user_id)
     if not row:
         return "ps"
-    return (row.get("lang") or "ps") if (row.get("lang") or "ps") in ("ps", "en") else "ps"
+    lang = (row.get("lang") or "ps").strip().lower()
+    return lang if lang in ("ps", "en") else "ps"
 
 
 def set_lang(user_id: int, lang: str):
@@ -254,8 +273,8 @@ def set_lang(user_id: int, lang: str):
 
 
 def get_stars(user_id: int) -> float:
-    row = get_user(user_id)
-    return float(row.get("stars") or 0) if row else 0.0
+    row = fetch_one("SELECT stars FROM users WHERE user_id = %s", (int(user_id),))
+    return float(row["stars"]) if row and row.get("stars") is not None else 0.0
 
 
 def add_stars(user_id: int, amount: float):
@@ -316,14 +335,10 @@ def extract_chat_username(link_or_username: str) -> Optional[str]:
 
 
 def human_remaining(delta: timedelta) -> str:
-    seconds = max(0, int(delta.total_seconds()))
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
+    total_seconds = max(0, int(delta.total_seconds()))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
     return f"{hours}h {minutes}m"
-
-
-def is_private(update: Update) -> bool:
-    return bool(update.effective_chat and update.effective_chat.type == "private")
 
 
 # =====================================
@@ -353,11 +368,13 @@ TEXTS = {
         "new_task": "📢 نوی ټاسک اضافه شو!\n⭐ Reward: {reward}",
         "stats_admin": "👥 ټول یوزران: {users}\n🆕 د نن یوزران: {today}\n⭐ د ټولو یوزرانو Stars: {stars}\n⭐ د اډمین Stars: {admin_stars}\n📝 فعال ټاسکونه: {tasks}",
         "admin_only": "دا برخه یوازې اډمین ته ده.",
-        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask",
+        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance",
         "broadcast_prompt": "هغه مسج ولیکئ چې ټولو users ته ولاړ شي.",
         "addtask_link": "د چینل لینک یا @username راولېږئ.",
         "addtask_title": "د چینل عنوان راولېږئ.",
         "addtask_reward": "ریوارډ ولیکئ، مثال: 0.5",
+        "addbalance_prompt": "هغه stars ولیکئ چې اډمین بیلانس ته اضافه شي. مثال: 1000",
+        "addbalance_done": "✅ اډمین بیلانس {amount} stars سره زیات شو.\n⭐ نوی بیلانس: {new_balance}",
     },
     "en": {
         "choose_lang": "Choose language:",
@@ -382,11 +399,13 @@ TEXTS = {
         "new_task": "📢 New task added!\n⭐ Reward: {reward}",
         "stats_admin": "👥 Total users: {users}\n🆕 Today users: {today}\n⭐ Total user stars: {stars}\n⭐ Admin stars: {admin_stars}\n📝 Active tasks: {tasks}",
         "admin_only": "This section is admin only.",
-        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask",
+        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/broadcast\n/addtask\n/addbalance",
         "broadcast_prompt": "Send the message you want to broadcast.",
         "addtask_link": "Send channel link or @username.",
         "addtask_title": "Send channel title.",
         "addtask_reward": "Send reward, example: 0.5",
+        "addbalance_prompt": "Send stars amount to add to admin balance. Example: 1000",
+        "addbalance_done": "✅ Admin balance increased by {amount} stars.\n⭐ New balance: {new_balance}",
     },
 }
 
@@ -407,7 +426,7 @@ def main_menu(user_id: int):
     ]
     if int(user_id) == ADMIN_ID:
         keyboard.insert(0, ["📊 Statistics", "📣 Broadcast"])
-        keyboard.insert(1, ["🛠 Add Task"])
+        keyboard.insert(1, ["🛠 Add Task", "➕ Add Balance"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
@@ -498,9 +517,10 @@ async def process_leave_penalties(bot, user_id: int):
             continue
         add_stars(user_id, -float(row["rewarded_stars"]))
         execute(
-    "UPDATE user_tasks SET reward_removed = 1, status = 'left', last_checked_at = %s WHERE id = %s",
-    (now_iso(), row["id"]),
-    )
+            "UPDATE user_tasks SET reward_removed = 1, status = 'left', last_checked_at = %s WHERE id = %s",
+            (now_iso(), row["id"]),
+        )
+
 
 async def periodic_leave_check(context: ContextTypes.DEFAULT_TYPE):
     for row in fetch_all("SELECT user_id FROM users"):
@@ -627,25 +647,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {user.id}\n"
             f"💰 Amount: {amount:g} Star ⭐\n"
-            f"🕒 Time: {now_pretty()}\n\n"
+            f"🕒 Time: {now_pretty_from_iso()}\n\n"
             "⏳ Status: Pending"
         )
         admin_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"), InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}")]
+            [
+                InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}"),
+            ]
         ])
 
         try:
             await context.bot.send_message(chat_id=ADMIN_ID, text=message_text, reply_markup=admin_buttons)
         except Exception as e:
-            await query.message.reply_text(f"Admin send error: {e}", reply_markup=main_menu(user.id))
             add_stars(user.id, amount)
+            await query.message.reply_text(f"Admin send error: {e}", reply_markup=main_menu(user.id))
             return
 
         try:
             channel_msg = await context.bot.send_message(chat_id=PAYMENT_CHANNEL, text=message_text)
         except Exception as e:
-            await query.message.reply_text(f"Channel send error: {e}", reply_markup=main_menu(user.id))
             add_stars(user.id, amount)
+            await query.message.reply_text(f"Channel send error: {e}", reply_markup=main_menu(user.id))
             return
 
         execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (channel_msg.message_id, wd_id))
@@ -667,7 +690,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {wd['user_id']}\n"
             f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty()}\n\n"
+            f"🕒 Time: {now_pretty_from_iso(wd.get('created_at'))}\n\n"
             "✅ Status: Successful ✅"
         )
         if wd.get("channel_message_id"):
@@ -697,7 +720,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 User: {username}\n"
             f"🪪 UserID: {wd['user_id']}\n"
             f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty()}\n\n"
+            f"🕒 Time: {now_pretty_from_iso(wd.get('created_at'))}\n\n"
             "❌ Status: Rejected"
         )
         if wd.get("channel_message_id"):
@@ -769,6 +792,14 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(user.id, "addtask_link"), reply_markup=main_menu(user.id))
         return
 
+    if text == "➕ Add Balance":
+        if user.id != ADMIN_ID:
+            await update.message.reply_text(t(user.id, "admin_only"), reply_markup=main_menu(user.id))
+            return
+        context.user_data["admin_flow"] = "addbalance"
+        await update.message.reply_text(t(user.id, "addbalance_prompt"), reply_markup=main_menu(user.id))
+        return
+
     if text == "🌐 Language":
         await update.message.reply_text(t(user.id, "choose_lang"), reply_markup=lang_keyboard())
         return
@@ -792,7 +823,7 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = tasks[0]
         await update.message.reply_text(
             f"📢 {task['channel_title']}\n\n⭐ Reward: {float(task['reward_stars']):g}",
-            reply_markup=task_keyboard(task['id'], task['link']),
+            reply_markup=task_keyboard(task["id"], task["link"]),
         )
         return
 
@@ -804,7 +835,10 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 last_dt = datetime.fromisoformat(last_bonus)
                 next_dt = last_dt + timedelta(hours=BONUS_INTERVAL_HOURS)
                 if datetime.now(timezone.utc) < next_dt:
-                    await update.message.reply_text(t(user.id, "bonus_wait", remaining=human_remaining(next_dt - datetime.now(timezone.utc))), reply_markup=main_menu(user.id))
+                    await update.message.reply_text(
+                        t(user.id, "bonus_wait", remaining=human_remaining(next_dt - datetime.now(timezone.utc))),
+                        reply_markup=main_menu(user.id),
+                    )
                     return
             except Exception:
                 pass
@@ -829,7 +863,7 @@ async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =====================================
-# ADMIN FLOWS / COMMANDS
+# ADMIN COMMANDS / FLOWS
 # =====================================
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
@@ -847,7 +881,8 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
     rows = fetch_all("SELECT user_id, username, stars FROM users ORDER BY created_at DESC LIMIT 100")
-    await update.message.reply_text("\n".join([f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g}" for r in rows]) or "No users")
+    text = "\n".join([f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g}" for r in rows]) or "No users"
+    await update.message.reply_text(text)
 
 
 async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -875,7 +910,8 @@ async def admin_withdraws(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
     rows = fetch_all("SELECT * FROM withdrawals WHERE status = 'pending' ORDER BY created_at DESC LIMIT 50")
-    await update.message.reply_text("\n".join([f"#{r['id']} | User {r['user_id']} | ⭐ {float(r['amount_stars']):g} | {r['status']}" for r in rows]) or "No pending withdraws")
+    text = "\n".join([f"#{r['id']} | User {r['user_id']} | ⭐ {float(r['amount_stars']):g} | {r['status']}" for r in rows]) or "No pending withdraws"
+    await update.message.reply_text(text)
 
 
 async def admin_botstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -916,6 +952,16 @@ async def admin_addtask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     context.user_data["admin_flow"] = "addtask_link"
     await update.message.reply_text(t(update.effective_user.id, "addtask_link"))
+
+
+async def admin_addbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_private(update):
+        return
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(t(update.effective_user.id, "admin_only"))
+        return
+    context.user_data["admin_flow"] = "addbalance"
+    await update.message.reply_text(t(update.effective_user.id, "addbalance_prompt"))
 
 
 async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -975,6 +1021,19 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("✅ Task added")
         return True
 
+    if flow == "addbalance":
+        try:
+            amount = float(text)
+        except Exception:
+            await update.message.reply_text("Invalid amount. Example: 1000")
+            return True
+        add_stars(ADMIN_ID, amount)
+        context.user_data.pop("admin_flow", None)
+        await update.message.reply_text(
+            t(update.effective_user.id, "addbalance_done", amount=f"{amount:g}", new_balance=f"{get_stars(ADMIN_ID):g}")
+        )
+        return True
+
     return False
 
 
@@ -996,6 +1055,7 @@ def main():
     app.add_handler(CommandHandler("botstats", admin_botstats))
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("addtask", admin_addtask))
+    app.add_handler(CommandHandler("addbalance", admin_addbalance))
 
     async def combined_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         handled = await admin_flow_router(update, context)
@@ -1009,7 +1069,7 @@ def main():
         app.job_queue.run_repeating(periodic_leave_check, interval=LEAVE_CHECK_INTERVAL_HOURS * 3600, first=600)
         app.job_queue.run_repeating(daily_promo_post, interval=PROMO_INTERVAL_HOURS * 3600, first=900)
 
-    logger.info("EasyEarn stars full final v2 is running...")
+    logger.info("EasyEarn stars final code is running...")
     app.run_polling(drop_pending_updates=True)
 
 
