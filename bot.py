@@ -186,7 +186,7 @@ def init_db():
 
 # FIX
     safe_exec("ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS amount_stars NUMERIC(12,2)")
-    safe_exec("ALTER TABLE withdrawals ALTER COLUMN amount DROP NOT NULL")
+    safe_exec("ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS amount NUMERIC(12,2)")
     execute(
         """
         CREATE TABLE IF NOT EXISTS promo_chats (
