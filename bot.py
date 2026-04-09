@@ -31,6 +31,7 @@ ADMIN_START_STARS = float(os.getenv("ADMIN_START_STARS", "100000"))
 FORCE_JOIN_CHANNELS = [
     ("@easyearnofficial1222", "https://t.me/easyearnofficial1222"),
     ("@easyearnpayments", "https://t.me/easyearnpayments"),
+    ("@easyearnu", "https://t.me/easyearnu"),
 ]
 
 REFERRAL_REWARD_STARS = 1.25
