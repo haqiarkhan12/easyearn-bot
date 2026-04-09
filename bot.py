@@ -931,6 +931,19 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref_by = r.get("referrer_id") or "-"
         lines.append(f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g} | ref_by: {ref_by}")
     await update.message.reply_text("\n".join(lines) or "No users")
+def get_user_refs(user_id):
+    return execute(
+        "SELECT id, username FROM users WHERE referrer_id=%s",
+        (user_id,)
+    )
+
+
+async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_user_refs(user_id):
+    return fetch_all(
+        "SELECT user_id AS id, username FROM users WHERE referrer_id = %s",
+        (user_id,)
+    )
 
 
 async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -939,17 +952,25 @@ async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text(t(update.effective_user.id, "admin_only"))
         return
+
     rows = top_referrals(50)
     if not rows:
         await update.message.reply_text("No referrals yet")
         return
+
     lines = []
     for i, row in enumerate(rows, start=1):
         u = get_user(row["referrer_id"])
         username = f"@{u['username']}" if u and u.get("username") else str(row["referrer_id"])
-        lines.append(f"{i}. {username} - {row['refs']} refs")
-    await update.message.reply_text("🏆 Referral Leaderboard\n\n" + "\n".join(lines))
 
+        refs = get_user_refs(row["referrer_id"])
+        ref_list = ", ".join(
+            [f"@{x['username']}" if x.get("username") else str(x["id"]) for x in refs]
+        ) if refs else "No refs"
+
+        lines.append(f"{i}. {username} - {len(refs)} refs\n👉 {ref_list}")
+
+    await update.message.reply_text("🏆 Referral Leaderboard\n\n" + "\n\n".join(lines))
 
 async def admin_withdraws(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
