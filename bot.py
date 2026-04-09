@@ -931,21 +931,12 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref_by = r.get("referrer_id") or "-"
         lines.append(f"{r['user_id']} | @{r['username'] or 'no_username'} | ⭐ {float(r['stars'] or 0):g} | ref_by: {ref_by}")
     await update.message.reply_text("\n".join(lines) or "No users")
-def get_user_refs(user_id):
-    return execute(
-        "SELECT id, username FROM users WHERE referrer_id=%s",
-        (user_id,)
-    )
 
-
-async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_user_refs(user_id):
     return fetch_all(
         "SELECT user_id AS id, username FROM users WHERE referrer_id = %s",
         (user_id,)
     )
-
-
 async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
         return
@@ -965,7 +956,7 @@ async def admin_refstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         refs = get_user_refs(row["referrer_id"])
         ref_list = ", ".join(
-            [f"@{x['username']}" if x.get("username") else str(x["id"]) for x in refs]
+            [f"@{x['username']}" if x.get("username") else str(x.get("id")) for x in refs]
         ) if refs else "No refs"
 
         lines.append(f"{i}. {username} - {len(refs)} refs\n👉 {ref_list}")
