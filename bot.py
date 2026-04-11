@@ -746,8 +746,8 @@ if data.startswith("withdraw_"):
             pass
         return
 
-    if data.startswith("admin_wd_no_"):
-        if user.id != ADMIN_ID:
+        if data.startswith("admin_wd_no_"):
+          if user.id != ADMIN_ID:
             return
         wd_id = int(data.split("_")[-1])
         wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
