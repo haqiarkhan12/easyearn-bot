@@ -386,7 +386,7 @@ TEXTS = {
         "joined_btn": "✅ I Joined",
         "join_failed": "Please join both channels first.",
         "my_stars": "⭐ Your stars: {stars}",
-        "referral": "👥 Your referral link:\n{link}\n\nYou earn 1.25 stars per referral. Fake referrals are not accepted. If detected, your account may be banned.\n\nTotal referrals: {count}",
+        "referral": "👥 Your referral link:\n{link}\n\nYou earn a percentage from your referrals' earnings. Fake referrals are not accepted. If detected, your account may be banned.\n\nTotal referrals: {count}",
         "tasks_empty": "No tasks available.",
         "task_done": "✅ Task completed.\n⭐ +{stars} stars added.",
         "task_already": "You already completed this task.",
