@@ -640,8 +640,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
             return
 
-        reward = float(task["reward_stars"])
-        if get_stars(ADMIN_ID) < reward:
+        reward = float(task["reward_stars"]       if get_stars(ADMIN_ID) < reward:
             await query.message.reply_text(t(user.id, "admin_low"), reply_markup=main_menu(user.id))
             return
 
@@ -658,13 +657,13 @@ if row and row.get("referrer_id"):
     if referral_bonus > 0:
         add_stars(int(row["referrer_id"]), referral_bonus)
 
-await query.message.reply_text(
-    t(user.id, "task_done", stars=f"{reward:g}"),
-    reply_markup=main_menu(user.id)
-)
-return
-
-if data.startswith("withdraw_"):
+    await query.message.reply_text(
+        t(user.id, "task_done", stars=f"{reward:g}"),
+        reply_markup=main_menu(user.id)
+    )
+    return
+    
+    if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
         if get_stars(user.id) < amount:
             await query.message.reply_text(t(user.id, "withdraw_low"), reply_markup=main_menu(user.id))
