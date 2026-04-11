@@ -664,7 +664,7 @@ await query.message.reply_text(
 )
 return
 
-    if data.startswith("withdraw_"):
+if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
         if get_stars(user.id) < amount:
             await query.message.reply_text(t(user.id, "withdraw_low"), reply_markup=main_menu(user.id))
