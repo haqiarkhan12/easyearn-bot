@@ -717,7 +717,7 @@ if data.startswith("withdraw_"):
         await query.message.reply_text(t(user.id, "withdraw_sent"), reply_markup=main_menu(user.id))
         return
 
-    if data.startswith("admin_wd_ok_"):
+        if data.startswith("admin_wd_ok_"):
         if user.id != ADMIN_ID:
             return
         wd_id = int(data.split("_")[-1])
