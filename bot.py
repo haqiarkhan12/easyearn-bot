@@ -34,7 +34,7 @@ FORCE_JOIN_CHANNELS = [
     ("@easyearnu", "https://t.me/easyearnu"),
 ]
 
-REFERRAL_REWARD_STARS = 1.25
+REFERRAL_PERCENT = 15
 DAILY_BONUS_STARS = 1.0
 WITHDRAW_OPTIONS = [15.0, 25.0, 50.0]
 BONUS_INTERVAL_HOURS = 24
@@ -653,9 +653,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         row = get_user(user.id)
-        if row and row.get("referrer_id") and int(row.get("referral_rewarded") or 0) == 0:
-            add_stars(int(row["referrer_id"]), REFERRAL_REWARD_STARS)
-            execute("UPDATE users SET referral_rewarded = 1 WHERE user_id = %s", (int(user.id),))
+if row and row.get("referrer_id"):
+    referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
+    if referral_bonus > 0:
+        add_stars(int(row["referrer_id"]), referral_bonus)
 
         await query.message.reply_text(t(user.id, "task_done", stars=f"{reward:g}"), reply_markup=main_menu(user.id))
         return
