@@ -556,231 +556,327 @@ async def periodic_leave_check(context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 # START / CALLBACKS
 # =====================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
         return
+
     user = update.effective_user
+    text = update.message.text or ""
+
+    referrer_id = None
+    if text.startswith("/start ref_"):
+        try:
+            referrer_id = int(text.split("ref_")[1].strip())
+            if referrer_id == int(user.id):
+                referrer_id = None
+        except Exception:
+            referrer_id = None
+
+    existing = get_user(int(user.id))
     ensure_user(int(user.id), user.username or "", user.full_name or "")
+
+    if referrer_id and existing and not existing.get("referrer_id"):
+        execute(
+            "UPDATE users SET referrer_id = %s WHERE user_id = %s",
+            (referrer_id, int(user.id)),
+        )
+
     context.user_data.pop("admin_flow", None)
 
-    if context.args:
-        arg = context.args[0]
-        if arg.startswith("ref_"):
-            try:
-                referrer_id = int(arg.split("_", 1)[1])
-                row = get_user(user.id)
-                if row and not row.get("referrer_id") and referrer_id != user.id:
-                    execute("UPDATE users SET referrer_id = %s WHERE user_id = %s", (referrer_id, int(user.id)))
-            except Exception:
-                pass
+    if not await check_force_join_all(context.bot, int(user.id)):
+        kb = []
+        for username, link in FORCE_JOIN_CHANNELS:
+            kb.append([InlineKeyboardButton(f"Join {username}", url=link)])
+        kb.append([InlineKeyboardButton("✅ I Joined", callback_data="check_force_join")])
 
-    row = get_user(user.id)
-    if not row or not row.get("lang"):
-        await update.message.reply_text(TEXTS["ps"]["choose_lang"], reply_markup=lang_keyboard())
-        return
-
-    if not await check_force_join_all(context.bot, user.id):
         await update.message.reply_text(
-            t(user.id, "force_join") + "\n\n" + "\n".join(x[0] for x in FORCE_JOIN_CHANNELS),
-            reply_markup=force_join_keyboard(user.id),
+            "Please join all required channels first.",
+            reply_markup=InlineKeyboardMarkup(kb),
         )
         return
 
-    await process_leave_penalties(context.bot, user.id)
-    await update.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
+    await update.message.reply_text(
+        "Welcome to EasyEarn Bot",
+        reply_markup=main_menu(int(user.id)),
+    )
 
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_private(update):
-        return
     query = update.callback_query
     await query.answer()
-    user = query.from_user
-    ensure_user(int(user.id), user.username or "", user.full_name or "")
-    data = query.data
 
-    if data in ("lang_ps", "lang_en"):
-        set_lang(user.id, "ps" if data == "lang_ps" else "en")
-        if not await check_force_join_all(context.bot, user.id):
-            await query.edit_message_text(
-                t(user.id, "force_join") + "\n\n" + "\n".join(x[0] for x in FORCE_JOIN_CHANNELS),
-                reply_markup=force_join_keyboard(user.id),
-            )
-            return
-        await query.edit_message_text(t(user.id, "intro"))
-        await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
-        return
+    user = update.effective_user
+    data = query.data or ""
 
     if data == "check_force_join":
-        if not await check_force_join_all(context.bot, user.id):
-            await query.answer(t(user.id, "join_failed"), show_alert=True)
+        if await check_force_join_all(context.bot, int(user.id)):
+            await query.message.reply_text(
+                "✅ Access granted.",
+                reply_markup=main_menu(int(user.id)),
+            )
+        else:
+            await query.message.reply_text("❌ Please join all required channels first.")
+        return
+
+    if data == "bonus":
+        row = get_user(int(user.id))
+        last_bonus = row.get("last_bonus_at") if row else None
+
+        if last_bonus and hours_since(last_bonus) < BONUS_INTERVAL_HOURS:
+            remain = BONUS_INTERVAL_HOURS - hours_since(last_bonus)
+            await query.message.reply_text(
+                f"⏳ Bonus already claimed. Remaining: {remain:.0f}h",
+                reply_markup=main_menu(int(user.id)),
+            )
             return
-        await query.edit_message_text(t(user.id, "intro"))
-        await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
+
+        add_stars(int(user.id), DAILY_BONUS_STARS)
+        execute(
+            "UPDATE users SET last_bonus_at = %s WHERE user_id = %s",
+            (now_iso(), int(user.id)),
+        )
+        await query.message.reply_text(
+            f"✅ Daily bonus claimed: {DAILY_BONUS_STARS:g} ⭐",
+            reply_markup=main_menu(int(user.id)),
+        )
         return
 
-    if data == "back_main":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
+    if data == "balance":
+        stars = get_stars(int(user.id))
+        await query.message.reply_text(
+            f"💰 Your balance: {stars:g} ⭐",
+            reply_markup=main_menu(int(user.id)),
+        )
         return
 
-    if data.startswith("verify_task_"):
+    if data == "referral":
+        me = await context.bot.get_me()
+        link = f"https://t.me/{me.username}?start=ref_{user.id}"
+        await query.message.reply_text(
+            f"🔗 Your referral link:\n{link}",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    if data == "tasks":
+        rows = fetch_all(
+            """
+            SELECT *
+            FROM tasks
+            WHERE status = 'active'
+              AND id NOT IN (
+                  SELECT task_id
+                  FROM user_tasks
+                  WHERE user_id = %s
+                    AND status = 'completed'
+                    AND reward_removed = 0
+              )
+            ORDER BY id DESC
+            """,
+            (int(user.id),),
+        )
+
+        if not rows:
+            await query.message.reply_text(
+                "No tasks available right now.",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        for task in rows:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Open Task", url=task["link"])],
+                [InlineKeyboardButton("✅ Verify", callback_data=f"verify_{task['id']}")],
+            ])
+            await query.message.reply_text(
+                f"📢 {task['channel_title']}\n⭐ Reward: {float(task['reward_stars']):g}",
+                reply_markup=kb,
+            )
+        return
+
+    if data.startswith("verify_"):
         task_id = int(data.split("_")[-1])
-        task = get_task(task_id)
+
+        task = fetch_one(
+            "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
+            (task_id,),
+        )
         if not task:
+            await query.message.reply_text(
+                "Task not found or inactive.",
+                reply_markup=main_menu(int(user.id)),
+            )
             return
-        existing = fetch_one("SELECT * FROM user_tasks WHERE user_id = %s AND task_id = %s", (int(user.id), task_id))
-        if existing:
-            await query.message.reply_text(t(user.id, "task_already"), reply_markup=main_menu(user.id))
+
+        already = fetch_one(
+            """
+            SELECT 1
+            FROM user_tasks
+            WHERE user_id = %s AND task_id = %s
+              AND status = 'completed'
+              AND reward_removed = 0
+            """,
+            (int(user.id), task_id),
+        )
+        if already:
+            await query.message.reply_text(
+                "You already completed this task.",
+                reply_markup=main_menu(int(user.id)),
+            )
             return
-        if not await check_join(context.bot, task["chat_username"], user.id):
-            await query.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
+
+        if not await check_join(context.bot, task["chat_username"], int(user.id)):
+            await query.message.reply_text(
+                "❌ Task verification failed. Please join first.",
+                reply_markup=main_menu(int(user.id)),
+            )
             return
 
         reward = float(task["reward_stars"])
 
-if get_stars(ADMIN_ID) < reward:
-    await query.message.reply_text(
-        t(user.id, "admin_low"),
-        reply_markup=main_menu(user.id)
-    )
-    return
+        if get_stars(ADMIN_ID) < reward:
+            await query.message.reply_text(
+                "❌ Admin balance is low.",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
 
-add_stars(ADMIN_ID, -reward)
-add_stars(user.id, reward)
+        add_stars(ADMIN_ID, -reward)
+        add_stars(int(user.id), reward)
+
         execute(
-            "INSERT INTO user_tasks (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at) VALUES (%s, %s, %s, 0, 'completed', %s, %s)",
+            """
+            INSERT INTO user_tasks
+                (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
+            VALUES (%s, %s, %s, 0, 'completed', %s, %s)
+            """,
             (int(user.id), task_id, reward, now_iso(), now_iso()),
         )
 
-        row = get_user(user.id)
-if row and row.get("referrer_id"):
-    referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
-    if referral_bonus > 0:
-        add_stars(int(row["referrer_id"]), referral_bonus)
+        # referral percent system
+        row = get_user(int(user.id))
+        if row and row.get("referrer_id"):
+            referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
+            if referral_bonus > 0:
+                add_stars(int(row["referrer_id"]), referral_bonus)
 
-    await query.message.reply_text(
-        t(user.id, "task_done", stars=f"{reward:g}"),
-        reply_markup=main_menu(user.id)
-    )
-    return
-    
+        await query.message.reply_text(
+            f"✅ Task completed. You earned {reward:g} ⭐",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
     if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
-        if get_stars(user.id) < amount:
-            await query.message.reply_text(t(user.id, "withdraw_low"), reply_markup=main_menu(user.id))
+
+        if get_stars(int(user.id)) < amount:
+            await query.message.reply_text(
+                "❌ Insufficient balance.",
+                reply_markup=main_menu(int(user.id)),
+            )
             return
 
-        add_stars(user.id, -amount)
-        
+        add_stars(int(user.id), -amount)
+
         wd = execute(
-         "INSERT INTO withdrawals (user_id, amount, amount_stars, status, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-(int(user.id), amount, amount, "pending", now_iso()),
-    
-    
-         returning=True,
+            """
+            INSERT INTO withdrawals (user_id, amount, amount_stars, status, created_at)
+            VALUES (%s, %s, %s, 'pending', %s)
+            RETURNING id
+            """,
+            (int(user.id), amount, amount, now_iso()),
+            returning=True,
         )
-        
+
         wd_id = wd["id"]
-        username = f"@{user.username}" if user.username else (user.full_name or "NoUsername")
-        message_text = (
+        wd_user = get_user(int(user.id))
+        username = f"@{wd_user['username']}" if wd_user and wd_user.get("username") else str(user.id)
+
+        msg = (
             "📤 New Withdrawal Request!\n\n"
             f"👤 User: {username}\n"
-            f"🪪 UserID: {user.id}\n"
-            f"💰 Amount: {amount:g} Star ⭐\n"
-            f"🕒 Time: {now_pretty()}\n\n"
+            f"🆔 UserID: {user.id}\n"
+            f"💰 Amount: {amount:g} ⭐\n"
+            f"🕒 Time: {now_pretty()}\n"
             "⏳ Status: Pending"
         )
 
-        admin_ok = False
+        admin_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}"),
+            ]
+        ])
+
         try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=message_text, reply_markup=withdraw_admin_keyboard(wd_id))
-            admin_ok = True
-        except Exception as e:
-            logger.info("admin withdraw send failed: %s", e)
+            sent = await context.bot.send_message(ADMIN_ID, msg, reply_markup=admin_kb)
+            execute(
+                "UPDATE withdrawals SET admin_message_id = %s WHERE id = %s",
+                (sent.message_id, wd_id),
+            )
+        except Exception:
+            pass
 
-        channel_message_id = None
-        try:
-            channel_msg = await context.bot.send_message(chat_id=PAYMENT_CHANNEL, text=message_text)
-            channel_message_id = channel_msg.message_id
-        except Exception as e:
-            logger.info("channel withdraw send failed: %s", e)
-
-        if not admin_ok and not channel_message_id:
-            add_stars(user.id, amount)
-            execute("UPDATE withdrawals SET status = 'failed' WHERE id = %s", (wd_id,))
-            await query.message.reply_text(t(user.id, "withdraw_failed"), reply_markup=main_menu(user.id))
-            return
-
-        if channel_message_id:
-            execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (channel_message_id, wd_id))
-
-        await query.message.reply_text(t(user.id, "withdraw_sent"), reply_markup=main_menu(user.id))
+        await query.message.reply_text(
+            f"✅ Withdrawal request sent: {amount:g} ⭐",
+            reply_markup=main_menu(int(user.id)),
+        )
         return
 
-        if data.startswith("admin_wd_ok_"):
-          if user.id != ADMIN_ID:
+    if data.startswith("admin_wd_ok_"):
+        if int(user.id) != ADMIN_ID:
             return
+
         wd_id = int(data.split("_")[-1])
         wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
         if not wd or wd["status"] != "pending":
             return
-        execute("UPDATE withdrawals SET status = 'successful', completed_at = %s WHERE id = %s", (now_iso(), wd_id))
-        wd_user = get_user(wd["user_id"])
-        username = f"@{wd_user['username']}" if wd_user and wd_user.get("username") else (wd_user.get("full_name") if wd_user else "Unknown")
-        message_text = (
-            "📤 New Withdrawal Request!\n\n"
-            f"👤 User: {username}\n"
-            f"🪪 UserID: {wd['user_id']}\n"
-            f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty(wd.get('created_at'))}\n\n"
-            "✅ Status: Successful ✅"
+
+        execute(
+            "UPDATE withdrawals SET status = 'approved', approved_at = %s WHERE id = %s",
+            (now_iso(), wd_id),
         )
-        if wd.get("channel_message_id"):
-            try:
-                await context.bot.edit_message_text(chat_id=PAYMENT_CHANNEL, message_id=wd["channel_message_id"], text=message_text)
-            except Exception:
-                pass
+
         try:
-            await context.bot.send_message(chat_id=wd["user_id"], text="✅ ستاسو ویډرا بریالی شو.")
+            await context.bot.send_message(
+                int(wd["user_id"]),
+                f"✅ Your withdrawal has been approved: {float(wd['amount_stars']):g} ⭐",
+                reply_markup=main_menu(int(wd["user_id"])),
+            )
         except Exception:
             pass
+
+        await query.message.reply_text("✅ Withdrawal approved.")
         return
 
-        if data.startswith("admin_wd_no_"):
-          if user.id != ADMIN_ID:
+    if data.startswith("admin_wd_no_"):
+        if int(user.id) != ADMIN_ID:
             return
+
         wd_id = int(data.split("_")[-1])
         wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
         if not wd or wd["status"] != "pending":
             return
-        add_stars(wd["user_id"], float(wd["amount_stars"]))
-        execute("UPDATE withdrawals SET status = 'rejected', completed_at = %s WHERE id = %s", (now_iso(), wd_id))
-        wd_user = get_user(wd["user_id"])
-        username = f"@{wd_user['username']}" if wd_user and wd_user.get("username") else (wd_user.get("full_name") if wd_user else "Unknown")
-        message_text = (
-            "📤 New Withdrawal Request!\n\n"
-            f"👤 User: {username}\n"
-            f"🪪 UserID: {wd['user_id']}\n"
-            f"💰 Amount: {float(wd['amount_stars']):g} Star ⭐\n"
-            f"🕒 Time: {now_pretty(wd.get('created_at'))}\n\n"
-            "❌ Status: Rejected"
+
+        add_stars(int(wd["user_id"]), float(wd["amount_stars"]))
+
+        execute(
+            "UPDATE withdrawals SET status = 'rejected', rejected_at = %s WHERE id = %s",
+            (now_iso(), wd_id),
         )
-        if wd.get("channel_message_id"):
-            try:
-                await context.bot.edit_message_text(chat_id=PAYMENT_CHANNEL, message_id=wd["channel_message_id"], text=message_text)
-            except Exception:
-                pass
+
         try:
-            await context.bot.send_message(chat_id=wd["user_id"], text="❌ ستاسو ویډرا رد شو.")
+            await context.bot.send_message(
+                int(wd["user_id"]),
+                f"❌ Your withdrawal has been rejected: {float(wd['amount_stars']):g} ⭐",
+                reply_markup=main_menu(int(wd["user_id"])),
+            )
         except Exception:
             pass
+
+        await query.message.reply_text("❌ Withdrawal rejected.")
         return
-
-
 # =====================================
 # USER ROUTER
 # =====================================
