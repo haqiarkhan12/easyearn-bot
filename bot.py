@@ -649,8 +649,8 @@ if get_stars(ADMIN_ID) < reward:
     )
     return
 
-        add_stars(ADMIN_ID, -reward)
-        add_stars(user.id, reward)
+add_stars(ADMIN_ID, -reward)
+add_stars(user.id, reward)
         execute(
             "INSERT INTO user_tasks (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at) VALUES (%s, %s, %s, 0, 'completed', %s, %s)",
             (int(user.id), task_id, reward, now_iso(), now_iso()),
