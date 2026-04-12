@@ -612,11 +612,57 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_force_join":
         if await check_force_join_all(context.bot, int(user.id)):
             await query.message.reply_text(
-                "✅ Access granted.",
+                "✅ Access granted." if get_lang(int(user.id)) != "ps" else "✅ لاسرسی درکړل شو",
                 reply_markup=main_menu(int(user.id)),
             )
         else:
-            await query.message.reply_text("❌ Please join all required channels first.")
+            await query.message.reply_text(
+                "❌ Please join all required channels first." if get_lang(int(user.id)) != "ps" else "❌ مهرباني وکړئ لومړی ټول اړین چینلونه جوین کړئ",
+                reply_markup=main_menu(int(user.id)),
+            )
+        return
+
+    if data == "back_main":
+        await query.message.reply_text(
+            "Welcome to EasyEarn Bot" if get_lang(int(user.id)) != "ps" else "EasyEarn Bot ته ښه راغلاست",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    if data == "language":
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+                InlineKeyboardButton("🇦🇫 پښتو", callback_data="lang_ps"),
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back_main")],
+        ])
+        await query.message.reply_text(
+            "Choose Language:" if get_lang(int(user.id)) != "ps" else "ژبه وټاکئ:",
+            reply_markup=kb,
+        )
+        return
+
+    if data == "lang_en":
+        execute(
+            "UPDATE users SET lang = %s WHERE user_id = %s",
+            ("en", int(user.id)),
+        )
+        await query.message.reply_text(
+            "✅ Language changed to English",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    if data == "lang_ps":
+        execute(
+            "UPDATE users SET lang = %s WHERE user_id = %s",
+            ("ps", int(user.id)),
+        )
+        await query.message.reply_text(
+            "✅ ژبه پښتو ته بدله شوه",
+            reply_markup=main_menu(int(user.id)),
+        )
         return
 
     if data == "bonus":
@@ -626,7 +672,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if last_bonus and hours_since(last_bonus) < BONUS_INTERVAL_HOURS:
             remain = BONUS_INTERVAL_HOURS - hours_since(last_bonus)
             await query.message.reply_text(
-                f"⏳ Bonus already claimed. Remaining: {remain:.0f}h",
+                f"⏳ Bonus already claimed. Remaining: {remain:.0f}h" if get_lang(int(user.id)) != "ps" else f"⏳ بونس مخکې اخیستل شوی. پاتې وخت: {remain:.0f} ساعت",
                 reply_markup=main_menu(int(user.id)),
             )
             return
@@ -637,7 +683,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (now_iso(), int(user.id)),
         )
         await query.message.reply_text(
-            f"✅ Daily bonus claimed: {DAILY_BONUS_STARS:g} ⭐",
+            f"✅ Daily bonus claimed: {DAILY_BONUS_STARS:g} ⭐" if get_lang(int(user.id)) != "ps" else f"✅ ورځنی بونس واخیستل شو: {DAILY_BONUS_STARS:g} ⭐",
             reply_markup=main_menu(int(user.id)),
         )
         return
@@ -645,7 +691,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "balance":
         stars = get_stars(int(user.id))
         await query.message.reply_text(
-            f"💰 Your balance: {stars:g} ⭐",
+            f"💰 Your balance: {stars:g} ⭐" if get_lang(int(user.id)) != "ps" else f"💰 ستاسو بیلانس: {stars:g} ⭐",
             reply_markup=main_menu(int(user.id)),
         )
         return
@@ -653,140 +699,167 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "referral":
         me = await context.bot.get_me()
         link = f"https://t.me/{me.username}?start=ref_{user.id}"
+        count_row = fetch_one(
+            "SELECT COUNT(*) AS total FROM users WHERE referrer_id = %s",
+            (int(user.id),),
+        )
+        count = int(count_row["total"]) if count_row else 0
+
         await query.message.reply_text(
-            f"🔗 Your referral link:\n{link}",
+            (
+                f"👥 Your referral link:\n{link}\n\n"
+                f"You earn {REFERRAL_PERCENT}% from your referrals' earnings.\n\n"
+                f"Total referrals: {count}"
+            ) if get_lang(int(user.id)) != "ps" else (
+                f"👥 ستاسو ریفرل لینک:\n{link}\n\n"
+                f"تاسو به د خپلو ریفرلونو له عاید څخه {REFERRAL_PERCENT}% ترلاسه کوئ.\n\n"
+                f"ټول ریفرلونه: {count}"
+            ),
             reply_markup=main_menu(int(user.id)),
         )
         return
 
     if data == "tasks":
         rows = fetch_all(
-        "SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC"
-    )
-
-    if not rows:
-        await query.message.reply_text(
-            "❌ فعلاً هېڅ تاسک نشته" if get_lang(int(user.id)) == "ps" else "❌ No tasks available right now.",
-            reply_markup=main_menu(int(user.id)),
+            "SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC"
         )
+
+        if not rows:
+            await query.message.reply_text(
+                "❌ No tasks available right now." if get_lang(int(user.id)) != "ps" else "❌ فعلاً هېڅ تاسک نشته",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        shown = 0
+
+        for task in rows:
+            done = fetch_one(
+                """
+                SELECT 1
+                FROM user_tasks
+                WHERE user_id = %s
+                  AND task_id = %s
+                  AND status = 'completed'
+                  AND reward_removed = 0
+                """,
+                (int(user.id), task["id"]),
+            )
+
+            if done:
+                continue
+
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔗 Open Task" if get_lang(int(user.id)) != "ps" else "🔗 تاسک خلاص کړه",
+                        url=task["link"],
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✅ Verify" if get_lang(int(user.id)) != "ps" else "✅ تایید",
+                        callback_data=f"verify_{task['id']}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back" if get_lang(int(user.id)) != "ps" else "⬅️ شاته",
+                        callback_data="back_main",
+                    )
+                ],
+            ])
+
+            await query.message.reply_text(
+                f"📢 {task['channel_title']}\n⭐ {'Reward' if get_lang(int(user.id)) != 'ps' else 'انعام'}: {float(task['reward_stars']):g}",
+                reply_markup=kb,
+            )
+            shown += 1
+
+        if shown == 0:
+            await query.message.reply_text(
+                "✅ You have completed all tasks" if get_lang(int(user.id)) != "ps" else "✅ ټول تاسکونه دې بشپړ کړي",
+                reply_markup=main_menu(int(user.id)),
+            )
         return
 
-    shown = 0
+    if data.startswith("verify_"):
+        task_id = int(data.split("_")[-1])
 
-    for task in rows:
-        done = fetch_one(
+        task = fetch_one(
+            "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
+            (task_id,),
+        )
+        if not task:
+            await query.message.reply_text(
+                "Task not found or inactive." if get_lang(int(user.id)) != "ps" else "تاسک ونه موندل شو یا غیرفعال دی",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        already = fetch_one(
             """
             SELECT 1
             FROM user_tasks
-            WHERE user_id = %s
-              AND task_id = %s
+            WHERE user_id = %s AND task_id = %s
               AND status = 'completed'
               AND reward_removed = 0
             """,
-            (int(user.id), task["id"]),
+            (int(user.id), task_id),
+        )
+        if already:
+            await query.message.reply_text(
+                "You already completed this task." if get_lang(int(user.id)) != "ps" else "تاسو دا تاسک مخکې بشپړ کړی",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        if not await check_join(context.bot, task["chat_username"], int(user.id)):
+            await query.message.reply_text(
+                "❌ Task verification failed. Please join first." if get_lang(int(user.id)) != "ps" else "❌ تایید ناکام شو، لومړی چینل جوین کړه",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        reward = float(task["reward_stars"])
+
+        if get_stars(ADMIN_ID) < reward:
+            await query.message.reply_text(
+                "❌ Admin balance is low." if get_lang(int(user.id)) != "ps" else "❌ د اډمین بیلانس کم دی",
+                reply_markup=main_menu(int(user.id)),
+            )
+            return
+
+        add_stars(ADMIN_ID, -reward)
+        add_stars(int(user.id), reward)
+
+        execute(
+            """
+            INSERT INTO user_tasks
+                (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
+            VALUES (%s, %s, %s, 0, 'completed', %s, %s)
+            """,
+            (int(user.id), task_id, reward, now_iso(), now_iso()),
         )
 
-        if done:
-            continue
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🔗 تاسک خلاص کړه" if get_lang(int(user.id)) == "ps" else "🔗 Open Task",
-                url=task["link"]
-            )],
-            [InlineKeyboardButton(
-                "✅ تایید" if get_lang(int(user.id)) == "ps" else "✅ Verify",
-                callback_data=f"verify_{task['id']}"
-            )],
-        ])
+        row = get_user(int(user.id))
+        if row and row.get("referrer_id"):
+            referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
+            if referral_bonus > 0:
+                add_stars(int(row["referrer_id"]), referral_bonus)
 
         await query.message.reply_text(
-            f"📢 {task['channel_title']}\n⭐ {'انعام' if get_lang(int(user.id)) == 'ps' else 'Reward'}: {float(task['reward_stars']):g}",
-            reply_markup=kb,
-        )
-        shown += 1
-
-    if shown == 0:
-        await query.message.reply_text(
-            "✅ ټول تاسکونه دې بشپړ کړي" if get_lang(int(user.id)) == "ps" else "✅ You have completed all tasks",
-            reply_markup=main_menu(int(user.id)),
-        )
-    return
-    
-if data.startswith("verify_"):
-    task_id = int(data.split("_")[-1])
-
-    task = fetch_one(
-        "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
-        (task_id,),
-    )
-if not task:
-       await query.message.reply_text(
-            "Task not found or inactive.",
-            reply_markup=main_menu(int(user.id)),
-        )
-return
-already = fetch_one(
-        """
-        SELECT 1
-        FROM user_tasks
-        WHERE user_id = %s AND task_id = %s
-          AND status = 'completed'
-          AND reward_removed = 0
-        """,
-        (int(user.id), task_id),
-    )
-if already:
-        await query.message.reply_text(
-            "You already completed this task." if get_lang(int(user.id)) != "ps" else "تاسو دا تاسک مخکې بشپړ کړی",
+            f"✅ Task completed\n⭐ {reward:g}" if get_lang(int(user.id)) != "ps" else f"✅ تاسک بشپړ شو\n⭐ {reward:g}",
             reply_markup=main_menu(int(user.id)),
         )
         return
 
-if not await check_join(context.bot, task["chat_username"], int(user.id)):
-        await query.message.reply_text(
-            "❌ Task verification failed. Please join first." if get_lang(int(user.id)) != "ps" else "❌ تایید ناکام شو، لومړی چینل جوین کړه",
-            reply_markup=main_menu(int(user.id)),
-        )
-        return
-
-reward = float(task["reward_stars"])
-
-if get_stars(ADMIN_ID) < reward:
-        await query.message.reply_text(
-            "❌ Admin balance is low." if get_lang(int(user.id)) != "ps" else "❌ د اډمین بیلانس کم دی",
-            reply_markup=main_menu(int(user.id)),
-        )
-        return
-add_stars(ADMIN_ID, -reward)
-add_stars(int(user.id), reward)
-
-execute(
-        """
-        INSERT INTO user_tasks
-            (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
-        VALUES (%s, %s, %s, 0, 'completed', %s, %s)
-        """,
-        (int(user.id), task_id, reward, now_iso(), now_iso()),
-    )
-row = get_user(int(user.id))
-if row and row.get("referrer_id"):
-        referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
-        if referral_bonus > 0:
-            add_stars(int(row["referrer_id"]), referral_bonus)
-
-await query.message.reply_text(
-        f"✅ {'تاسک بشپړ شو' if get_lang(int(user.id)) == 'ps' else 'Task completed'}\n⭐ {reward:g}",
-        reply_markup=main_menu(int(user.id)),
-    )
-return
-
-if data.startswith("withdraw_"):
+    if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
 
         if get_stars(int(user.id)) < amount:
             await query.message.reply_text(
-                "❌ Insufficient balance.",
+                "❌ Insufficient balance." if get_lang(int(user.id)) != "ps" else "❌ بیلانس کم دی",
                 reply_markup=main_menu(int(user.id)),
             )
             return
@@ -833,10 +906,67 @@ if data.startswith("withdraw_"):
             pass
 
         await query.message.reply_text(
-            f"✅ Withdrawal request sent: {amount:g} ⭐",
+            f"✅ Withdrawal request sent: {amount:g} ⭐" if get_lang(int(user.id)) != "ps" else f"✅ د ویډرا غوښتنه واستول شوه: {amount:g} ⭐",
             reply_markup=main_menu(int(user.id)),
         )
         return
+
+    if data.startswith("admin_wd_ok_"):
+        if int(user.id) != ADMIN_ID:
+            return
+
+        wd_id = int(data.split("_")[-1])
+        wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
+        if not wd or wd["status"] != "pending":
+            return
+
+        execute(
+            "UPDATE withdrawals SET status = 'approved', approved_at = %s WHERE id = %s",
+            (now_iso(), wd_id),
+        )
+
+        try:
+            await context.bot.send_message(
+                int(wd["user_id"]),
+                f"✅ Your withdrawal has been approved: {float(wd['amount_stars']):g} ⭐" if get_lang(int(wd["user_id"])) != "ps" else f"✅ ستاسو ویډرا منظور شو: {float(wd['amount_stars']):g} ⭐",
+                reply_markup=main_menu(int(wd["user_id"])),
+            )
+        except Exception:
+            pass
+
+        await query.message.reply_text("✅ Withdrawal approved.")
+        return
+
+    if data.startswith("admin_wd_no_"):
+        if int(user.id) != ADMIN_ID:
+            return
+
+        wd_id = int(data.split("_")[-1])
+        wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
+        if not wd or wd["status"] != "pending":
+            return
+
+        add_stars(int(wd["user_id"]), float(wd["amount_stars"]))
+
+        execute(
+            "UPDATE withdrawals SET status = 'rejected', rejected_at = %s WHERE id = %s",
+            (now_iso(), wd_id),
+        )
+
+        try:
+            await context.bot.send_message(
+                int(wd["user_id"]),
+                f"❌ Your withdrawal has been rejected: {float(wd['amount_stars']):g} ⭐" if get_lang(int(wd["user_id"])) != "ps" else f"❌ ستاسو ویډرا رد شو: {float(wd['amount_stars']):g} ⭐",
+                reply_markup=main_menu(int(wd["user_id"])),
+            )
+        except Exception:
+            pass
+
+        await query.message.reply_text("❌ Withdrawal rejected.")
+        return
+
+
+
 
 if data.startswith("admin_wd_ok_"):
         if int(user.id) != ADMIN_ID:
