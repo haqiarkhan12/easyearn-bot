@@ -836,7 +836,7 @@ if data.startswith("withdraw_"):
         )
         return
 
-    if data.startswith("admin_wd_ok_"):
+if data.startswith("admin_wd_ok_"):
         if int(user.id) != ADMIN_ID:
             return
 
