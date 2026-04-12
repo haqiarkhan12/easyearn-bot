@@ -752,7 +752,7 @@ if not await check_join(context.bot, task["chat_username"], int(user.id)):
 
 reward = float(task["reward_stars"])
 
-    if get_stars(ADMIN_ID) < reward:
+if get_stars(ADMIN_ID) < reward:
         await query.message.reply_text(
             "❌ Admin balance is low." if get_lang(int(user.id)) != "ps" else "❌ د اډمین بیلانس کم دی",
             reply_markup=main_menu(int(user.id)),
