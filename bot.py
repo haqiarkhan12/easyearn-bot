@@ -779,7 +779,7 @@ if data.startswith("verify_"):
         )
         return
 
-    if data.startswith("withdraw_"):
+if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
 
         if get_stars(int(user.id)) < amount:
