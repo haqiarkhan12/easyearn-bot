@@ -712,77 +712,77 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu(int(user.id)),
         )
     return
+    
 if data.startswith("verify_"):
-        task_id = int(data.split("_")[-1])
+    task_id = int(data.split("_")[-1])
 
-        task = fetch_one(
-            "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
-            (task_id,),
-        )
-        if not task:
-            await query.message.reply_text(
-                "Task not found or inactive.",
-                reply_markup=main_menu(int(user.id)),
-            )
-            return
-
-        already = fetch_one(
-            """
-            SELECT 1
-            FROM user_tasks
-            WHERE user_id = %s AND task_id = %s
-              AND status = 'completed'
-              AND reward_removed = 0
-            """,
-            (int(user.id), task_id),
-        )
-        if already:
-            await query.message.reply_text(
-                "You already completed this task.",
-                reply_markup=main_menu(int(user.id)),
-            )
-            return
-
-        if not await check_join(context.bot, task["chat_username"], int(user.id)):
-            await query.message.reply_text(
-                "❌ Task verification failed. Please join first.",
-                reply_markup=main_menu(int(user.id)),
-            )
-            return
-
-        reward = float(task["reward_stars"])
-
-        if get_stars(ADMIN_ID) < reward:
-            await query.message.reply_text(
-                "❌ Admin balance is low.",
-                reply_markup=main_menu(int(user.id)),
-            )
-            return
-
-        add_stars(ADMIN_ID, -reward)
-        add_stars(int(user.id), reward)
-
-        execute(
-            """
-            INSERT INTO user_tasks
-                (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
-            VALUES (%s, %s, %s, 0, 'completed', %s, %s)
-            """,
-            (int(user.id), task_id, reward, now_iso(), now_iso()),
-        )
-
-        # referral percent system
-        row = get_user(int(user.id))
-        if row and row.get("referrer_id"):
-            referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
-            if referral_bonus > 0:
-                add_stars(int(row["referrer_id"]), referral_bonus)
-
+    task = fetch_one(
+        "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
+        (task_id,),
+    )
+    if not task:
         await query.message.reply_text(
-            f"✅ Task completed. You earned {reward:g} ⭐",
+            "Task not found or inactive.",
             reply_markup=main_menu(int(user.id)),
         )
         return
+
+    already = fetch_one(
+        """
+        SELECT 1
+        FROM user_tasks
+        WHERE user_id = %s AND task_id = %s
+          AND status = 'completed'
+          AND reward_removed = 0
+        """,
+        (int(user.id), task_id),
+    )
+    if already:
+        await query.message.reply_text(
+            "You already completed this task." if get_lang(int(user.id)) != "ps" else "تاسو دا تاسک مخکې بشپړ کړی",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    if not await check_join(context.bot, task["chat_username"], int(user.id)):
+        await query.message.reply_text(
+            "❌ Task verification failed. Please join first." if get_lang(int(user.id)) != "ps" else "❌ تایید ناکام شو، لومړی چینل جوین کړه",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    reward = float(task["reward_stars"])
+
+    if get_stars(ADMIN_ID) < reward:
+        await query.message.reply_text(
+            "❌ Admin balance is low." if get_lang(int(user.id)) != "ps" else "❌ د اډمین بیلانس کم دی",
+            reply_markup=main_menu(int(user.id)),
+        )
+        return
+
+    add_stars(ADMIN_ID, -reward)
+    add_stars(int(user.id), reward)
+
+    execute(
+        """
+        INSERT INTO user_tasks
+            (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
+        VALUES (%s, %s, %s, 0, 'completed', %s, %s)
+        """,
+        (int(user.id), task_id, reward, now_iso(), now_iso()),
+    )
+
+    row = get_user(int(user.id))
+    if row and row.get("referrer_id"):
+        referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
+        if referral_bonus > 0:
+            add_stars(int(row["referrer_id"]), referral_bonus)
+
+    await query.message.reply_text(
+        f"✅ {'تاسک بشپړ شو' if get_lang(int(user.id)) == 'ps' else 'Task completed'}\n⭐ {reward:g}",
+        reply_markup=main_menu(int(user.id)),
+    )
+    return
 
 if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
