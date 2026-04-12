@@ -758,11 +758,10 @@ if get_stars(ADMIN_ID) < reward:
             reply_markup=main_menu(int(user.id)),
         )
         return
+add_stars(ADMIN_ID, -reward)
+add_stars(int(user.id), reward)
 
-    add_stars(ADMIN_ID, -reward)
-    add_stars(int(user.id), reward)
-
-    execute(
+execute(
         """
         INSERT INTO user_tasks
             (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at)
