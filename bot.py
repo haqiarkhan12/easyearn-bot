@@ -743,7 +743,7 @@ if already:
         )
         return
 
-    if not await check_join(context.bot, task["chat_username"], int(user.id)):
+if not await check_join(context.bot, task["chat_username"], int(user.id)):
         await query.message.reply_text(
             "❌ Task verification failed. Please join first." if get_lang(int(user.id)) != "ps" else "❌ تایید ناکام شو، لومړی چینل جوین کړه",
             reply_markup=main_menu(int(user.id)),
