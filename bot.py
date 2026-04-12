@@ -660,7 +660,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "tasks":
-    rows = fetch_all(
+        rows = fetch_all(
         "SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC"
     )
 
@@ -690,8 +690,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔗 تاسک خلاص کړه" if get_lang(int(user.id)) == "ps" else "🔗 Open Task", url=task["link"])],
-            [InlineKeyboardButton("✅ تایید" if get_lang(int(user.id)) == "ps" else "✅ Verify", callback_data=f"verify_{task['id']}")],
+            [InlineKeyboardButton(
+                "🔗 تاسک خلاص کړه" if get_lang(int(user.id)) == "ps" else "🔗 Open Task",
+                url=task["link"]
+            )],
+            [InlineKeyboardButton(
+                "✅ تایید" if get_lang(int(user.id)) == "ps" else "✅ Verify",
+                callback_data=f"verify_{task['id']}"
+            )],
         ])
 
         await query.message.reply_text(
