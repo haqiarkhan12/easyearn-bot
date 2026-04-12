@@ -736,7 +736,7 @@ already = fetch_one(
         """,
         (int(user.id), task_id),
     )
-    if already:
+if already:
         await query.message.reply_text(
             "You already completed this task." if get_lang(int(user.id)) != "ps" else "تاسو دا تاسک مخکې بشپړ کړی",
             reply_markup=main_menu(int(user.id)),
