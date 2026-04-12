@@ -721,7 +721,7 @@ if data.startswith("verify_"):
         (task_id,),
     )
 if not task:
-    await query.message.reply_text(
+        await query.message.reply_text(
             "Task not found or inactive.",
             reply_markup=main_menu(int(user.id)),
         )
