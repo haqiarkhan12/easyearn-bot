@@ -862,7 +862,7 @@ if data.startswith("admin_wd_ok_"):
         await query.message.reply_text("✅ Withdrawal approved.")
         return
 
-    if data.startswith("admin_wd_no_"):
+if data.startswith("admin_wd_no_"):
         if int(user.id) != ADMIN_ID:
             return
 
