@@ -707,8 +707,7 @@ if shown == 0:
     )
 
 return
-
-    if data.startswith("verify_"):
+if data.startswith("verify_"):
         task_id = int(data.split("_")[-1])
 
         task = fetch_one(
