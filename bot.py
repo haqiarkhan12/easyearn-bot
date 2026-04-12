@@ -720,7 +720,7 @@ if data.startswith("verify_"):
         "SELECT * FROM tasks WHERE id = %s AND status = 'active'",
         (task_id,),
     )
-    if not task:
+if not task:
         await query.message.reply_text(
             "Task not found or inactive.",
             reply_markup=main_menu(int(user.id)),
