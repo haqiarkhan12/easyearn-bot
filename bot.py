@@ -775,7 +775,7 @@ if row and row.get("referrer_id"):
         if referral_bonus > 0:
             add_stars(int(row["referrer_id"]), referral_bonus)
 
-    await query.message.reply_text(
+await query.message.reply_text(
         f"✅ {'تاسک بشپړ شو' if get_lang(int(user.id)) == 'ps' else 'Task completed'}\n⭐ {reward:g}",
         reply_markup=main_menu(int(user.id)),
     )
