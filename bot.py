@@ -726,7 +726,7 @@ if not task:
             reply_markup=main_menu(int(user.id)),
         )
         return
-    already = fetch_one(
+already = fetch_one(
         """
         SELECT 1
         FROM user_tasks
