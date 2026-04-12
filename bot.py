@@ -769,8 +769,7 @@ execute(
         """,
         (int(user.id), task_id, reward, now_iso(), now_iso()),
     )
-
-    row = get_user(int(user.id))
+row = get_user(int(user.id))
     if row and row.get("referrer_id"):
         referral_bonus = round((reward * REFERRAL_PERCENT) / 100, 2)
         if referral_bonus > 0:
