@@ -665,7 +665,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 )
 
 if not rows:
-    await query.message.reply_text(
+        await query.message.reply_text(
         "❌ فعلاً هېڅ تاسک نشته" if get_lang(int(user.id)) == "ps" else "❌ No tasks available right now.",
         reply_markup=main_menu(int(user.id)),
     )
