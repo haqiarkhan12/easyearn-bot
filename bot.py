@@ -661,39 +661,52 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "tasks":
         rows = fetch_all(
-            """
-            SELECT *
-            FROM tasks
-            WHERE status = 'active'
-              AND id NOT IN (
-                  SELECT task_id
-                  FROM user_tasks
-                  WHERE user_id = %s
-                    AND status = 'completed'
-                    AND reward_removed = 0
-              )
-            ORDER BY id DESC
-            """,
-            (int(user.id),),
-        )
+    "SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC"
+)
 
-        if not rows:
-            await query.message.reply_text(
-                "No tasks available right now.",
-                reply_markup=main_menu(int(user.id)),
-            )
-            return
+if not rows:
+    await query.message.reply_text(
+        "❌ فعلاً هېڅ تاسک نشته" if get_lang(int(user.id)) == "ps" else "❌ No tasks available right now.",
+        reply_markup=main_menu(int(user.id)),
+    )
+    return
 
-        for task in rows:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔗 Open Task", url=task["link"])],
-                [InlineKeyboardButton("✅ Verify", callback_data=f"verify_{task['id']}")],
-            ])
-            await query.message.reply_text(
-                f"📢 {task['channel_title']}\n⭐ Reward: {float(task['reward_stars']):g}",
-                reply_markup=kb,
-            )
-        return
+shown = 0
+
+for task in rows:
+    done = fetch_one(
+        """
+        SELECT 1
+        FROM user_tasks
+        WHERE user_id = %s
+          AND task_id = %s
+          AND status = 'completed'
+          AND reward_removed = 0
+        """,
+        (int(user.id), task["id"]),
+    )
+
+    if done:
+        continue
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 تاسک خلاص کړه" if get_lang(int(user.id)) == "ps" else "🔗 Open Task", url=task["link"])],
+        [InlineKeyboardButton("✅ تایید" if get_lang(int(user.id)) == "ps" else "✅ Verify", callback_data=f"verify_{task['id']}")],
+    ])
+
+    await query.message.reply_text(
+        f"📢 {task['channel_title']}\n⭐ {'انعام' if get_lang(int(user.id)) == 'ps' else 'Reward'}: {float(task['reward_stars']):g}",
+        reply_markup=kb,
+    )
+    shown += 1
+
+if shown == 0:
+    await query.message.reply_text(
+        "✅ ټول تاسکونه دې بشپړ کړي" if get_lang(int(user.id)) == "ps" else "✅ You have completed all tasks",
+        reply_markup=main_menu(int(user.id)),
+    )
+
+return
 
     if data.startswith("verify_"):
         task_id = int(data.split("_")[-1])
