@@ -750,7 +750,7 @@ if not await check_join(context.bot, task["chat_username"], int(user.id)):
         )
         return
 
-    reward = float(task["reward_stars"])
+reward = float(task["reward_stars"])
 
     if get_stars(ADMIN_ID) < reward:
         await query.message.reply_text(
