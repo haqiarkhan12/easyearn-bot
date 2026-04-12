@@ -725,7 +725,7 @@ if not task:
             "Task not found or inactive.",
             reply_markup=main_menu(int(user.id)),
         )
-        return
+    return
 already = fetch_one(
         """
         SELECT 1
