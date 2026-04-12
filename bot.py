@@ -779,7 +779,7 @@ await query.message.reply_text(
         f"✅ {'تاسک بشپړ شو' if get_lang(int(user.id)) == 'ps' else 'Task completed'}\n⭐ {reward:g}",
         reply_markup=main_menu(int(user.id)),
     )
-    return
+return
 
 if data.startswith("withdraw_"):
         amount = float(data.split("_")[-1])
