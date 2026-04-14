@@ -1,4 +1,4 @@
-         import logging
+import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -518,10 +518,16 @@ async def daily_promo_post(context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 async def check_join(bot, chat_username: str, user_id: int) -> bool:
     try:
+        me = await bot.get_me()
+        bot_member = await bot.get_chat_member(chat_id=chat_username, user_id=me.id)
+        if bot_member.status not in ("administrator", "creator"):
+            return False
+
         member = await bot.get_chat_member(chat_id=chat_username, user_id=int(user_id))
         return member.status in ("member", "administrator", "creator", "owner")
     except Exception:
         return False
+        
 
 
 async def check_force_join_all(bot, user_id: int) -> bool:
@@ -859,6 +865,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         add_stars(ADMIN_ID, -reward)
         add_stars(int(user.id), reward)
+        await query.message.delete()
 
         execute(
             """
