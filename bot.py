@@ -726,7 +726,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "tasks":
-        rows = fetch_all("SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC")
+        rows = fetch_all(
+        "SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC"
+    )
 
     if not rows:
         await query.message.reply_text(
@@ -735,10 +737,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    shown = 0
+    is_admin = int(user.id) == ADMIN_ID
     lines = []
+    buttons = []
+    shown = 0
+    number = 1
 
-    for idx, task in enumerate(rows, start=1):
+    for task in rows:
         done = fetch_one(
             """
             SELECT 1
@@ -751,10 +756,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (int(user.id), task["id"]),
         )
 
-        if done and int(user.id) != ADMIN_ID:
+        # یوزر ته completed task مه ښیه
+        if not is_admin and done:
             continue
 
-        if int(user.id) == ADMIN_ID:
+        reward_text = f"{float(task['reward_stars']):g}"
+
+        if is_admin:
             duration = "0d"
             created = task.get("created_at")
             if created:
@@ -764,24 +772,57 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
+            join_row = fetch_one(
+                """
+                SELECT COUNT(*) AS c
+                FROM user_tasks
+                WHERE task_id = %s
+                  AND reward_removed = 0
+                """,
+                (task["id"],),
+            )
+            joins = int(join_row["c"]) if join_row else 0
+
             lines.append(
-                f"{idx}. {task['channel_title']}\n"
-                f"⭐ Reward: {float(task['reward_stars']):g}\n"
+                f"{number}. {task['channel_title']}\n"
+                f"⭐ Reward: {reward_text}\n"
+                f"👥 Joined: {joins}\n"
                 f"⏱ Duration: {duration}\n"
             )
         else:
             if get_lang(int(user.id)) == "ps":
                 lines.append(
-                    f"{idx}. {task['channel_title']}\n"
-                    f"⭐ انعام: {float(task['reward_stars']):g}\n"
+                    f"{number}. {task['channel_title']}\n"
+                    f"⭐ انعام: {reward_text}\n"
                 )
             else:
                 lines.append(
-                    f"{idx}. {task['channel_title']}\n"
-                    f"⭐ Reward: {float(task['reward_stars']):g}\n"
+                    f"{number}. {task['channel_title']}\n"
+                    f"⭐ Reward: {reward_text}\n"
                 )
 
+        # اډمین ته فقط open button
+        if is_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    f"🔗 {number}",
+                    url=task["link"]
+                )
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(
+                    f"🔗 {number}",
+                    url=task["link"]
+                ),
+                InlineKeyboardButton(
+                    f"✅ {number}",
+                    callback_data=f"verify_{task['id']}"
+                )
+            ])
+
         shown += 1
+        number += 1
 
     if shown == 0:
         await query.message.reply_text(
@@ -790,66 +831,24 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await query.message.reply_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ Back" if get_lang(int(user.id)) != "ps" else "⬅️ شاته", callback_data="back_main")]]
-        ),
-    )
-
-    if int(user.id) != ADMIN_ID:
-        for task in rows:
-            done = fetch_one(
-                """
-                SELECT 1
-                FROM user_tasks
-                WHERE user_id = %s
-                  AND task_id = %s
-                  AND status = 'completed'
-                  AND reward_removed = 0
-                """,
-                (int(user.id), task["id"]),
-            )
-            if done:
-                continue
-
-            await query.message.reply_text(
-                t(user.id, "task_item", title=task["channel_title"], stars=f"{float(task['reward_stars']):g}"),
-                reply_markup=task_keyboard(int(user.id), task["id"], task["link"]),
-            )
-
-        return
-
-        await query.message.reply_text(
-            "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton("⬅️ Back" if get_lang(int(user.id)) != "ps" else "⬅️ شاته", callback_data="back_main")]
-                ]
-            ),
+    buttons.append([
+        InlineKeyboardButton(
+            "⬅️ Back" if get_lang(int(user.id)) != "ps" else "⬅️ شاته",
+            callback_data="back_main"
         )
+    ])
 
-        for task in rows:
-            done = fetch_one(
-                """
-                SELECT 1
-                FROM user_tasks
-                WHERE user_id = %s
-                  AND task_id = %s
-                  AND status = 'completed'
-                  AND reward_removed = 0
-                """,
-                (int(user.id), task["id"]),
-            )
-            if done:
-                continue
+    if is_admin:
+        title = "📋 Active Tasks:\n\n"
+    else:
+        title = "📋 Available Tasks:\n\n" if get_lang(int(user.id)) != "ps" else "📋 موجود تاسکونه:\n\n"
 
-            await query.message.reply_text(
-                t(user.id, "task_item", title=task["channel_title"], stars=f"{float(task['reward_stars']):g}"),
-                reply_markup=task_keyboard(int(user.id), task["id"], task["link"]),
-            )
-
-        return
+    await query.message.reply_text(
+        title + "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return
+        
 
     if data.startswith("verify_"):
         task_id = int(data.split("_")[-1])
