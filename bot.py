@@ -726,7 +726,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "tasks":
-    rows = fetch_all("SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC")
+        rows = fetch_all("SELECT * FROM tasks WHERE status = 'active' ORDER BY id DESC")
 
     if not rows:
         await query.message.reply_text(
