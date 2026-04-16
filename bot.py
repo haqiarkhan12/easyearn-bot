@@ -414,6 +414,10 @@ def init_db():
 
     safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type TEXT DEFAULT 'channel'")
     safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requires_proof BOOLEAN DEFAULT FALSE")
+    safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_required BOOLEAN DEFAULT FALSE")
+    safe_exec("UPDATE tasks SET task_type = 'channel' WHERE task_type IS NULL OR task_type = ''")
+    safe_exec("UPDATE tasks SET proof_required = COALESCE(requires_proof, FALSE) WHERE proof_required IS NULL")
+    safe_exec("ALTER TABLE tasks ALTER COLUMN proof_required SET DEFAULT FALSE")
     safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS post_link TEXT")
     safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS bot_link TEXT")
     safe_exec("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata TEXT")
@@ -774,11 +778,11 @@ def add_task_record(
     row = execute(
         """
         INSERT INTO tasks
-            (task_type, channel_title, chat_username, link, reward_stars, status, created_at, requires_proof, post_link, bot_link)
-        VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
+            (task_type, channel_title, chat_username, link, reward_stars, status, created_at, requires_proof, proof_required, post_link, bot_link)
+        VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (task_type, channel_title, chat_username, link, reward_stars, now_iso(), requires_proof, post_link, bot_link),
+        (task_type, channel_title, chat_username, link, reward_stars, now_iso(), requires_proof, requires_proof, post_link, bot_link),
         returning=True,
     )
     return int(row["id"])
@@ -1525,6 +1529,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "channel"
+        context.user_data["task_type"] = "channel"
         context.user_data["admin_flow"] = "addtask_link"
         await query.message.reply_text(t(user.id, "addtask_link"), reply_markup=cancel_reply_keyboard())
         return
@@ -1533,6 +1538,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "reaction"
+        context.user_data["task_type"] = "reaction"
         context.user_data["admin_flow"] = "addtask_post_link"
         await query.message.reply_text(t(user.id, "addtask_post_link"), reply_markup=cancel_reply_keyboard())
         return
@@ -1541,6 +1547,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "bot_link"
+        context.user_data["task_type"] = "bot_link"
         context.user_data["admin_flow"] = "addtask_bot_link"
         await query.message.reply_text(t(user.id, "addtask_bot_link"), reply_markup=cancel_reply_keyboard())
         return
@@ -1549,6 +1556,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "youtube"
+        context.user_data["task_type"] = "youtube"
         context.user_data["admin_flow"] = "addtask_link"
         await query.message.reply_text("Send the YouTube channel/video link.", reply_markup=cancel_reply_keyboard())
         return
@@ -1557,6 +1565,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "facebook"
+        context.user_data["task_type"] = "facebook"
         context.user_data["admin_flow"] = "addtask_link"
         await query.message.reply_text("Send the Facebook page/post link.", reply_markup=cancel_reply_keyboard())
         return
@@ -1934,6 +1943,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for key in [
             "admin_flow",
             "new_task_type",
+            "task_type",
             "task_chat_username",
             "task_link",
             "task_title",
@@ -1959,7 +1969,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     if flow == "addtask_link":
-        task_type = context.user_data.get("new_task_type") or "channel"
+        task_type = context.user_data.get("task_type") or context.user_data.get("new_task_type") or "channel"
         if task_type == "channel":
             username = extract_chat_username(text)
             if not username:
@@ -2012,7 +2022,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Invalid reward. Example: 0.5", reply_markup=cancel_reply_keyboard())
             return True
 
-        task_type = context.user_data.get("new_task_type") or "channel"
+        task_type = context.user_data.get("task_type") or context.user_data.get("new_task_type") or "channel"
         title = context.user_data.get("task_title") or "Task"
         created_id = add_task_record(
             task_type=task_type,
@@ -2028,6 +2038,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for key in [
             "admin_flow",
             "new_task_type",
+            "task_type",
             "task_chat_username",
             "task_link",
             "task_title",
