@@ -46,6 +46,7 @@ PROMO_INTERVAL_HOURS = 24
 LEAVE_CHECK_INTERVAL_HOURS = 2
 WITHDRAW_COOLDOWN_HOURS = 4
 DEFAULT_PAGE_SIZE = 8
+PROOF_TASK_TYPES = {"reaction", "bot_link", "youtube", "facebook"}
 
 PROMO_TEXT = (
     "📢 زمونږ خدمات\n\n"
@@ -434,7 +435,10 @@ def init_db():
     safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_user ON user_tasks(user_id)")
     safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_task ON user_tasks(task_id)")
     safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_user_status ON user_tasks(user_id, status, reward_removed)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_tasks_status_id ON tasks(status, id DESC)")
     safe_exec("CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_withdrawals_user_status ON withdrawals(user_id, status)")
 
     admin = fetch_one("SELECT user_id, stars FROM users WHERE user_id = %s", (ADMIN_ID,))
     if not admin:
@@ -592,8 +596,10 @@ def get_visible_tasks_for_user(user_id: int) -> list[dict]:
               FROM user_tasks ut
               WHERE ut.user_id = %s
                 AND ut.task_id = t.id
-                AND ut.status = 'completed'
-                AND ut.reward_removed = 0
+                AND (
+                    (ut.status = 'completed' AND ut.reward_removed = 0)
+                    OR ut.status = 'pending_review'
+                )
           )
         ORDER BY t.id DESC
         """,
@@ -740,6 +746,7 @@ def mark_proof_pending(user_id: int, task_id: int, photo_file_id: str, photo_uni
         VALUES (%s, %s, 0, 1, 'pending_review', %s, %s, %s, %s, %s, 0)
         ON CONFLICT (user_id, task_id)
         DO UPDATE SET status = 'pending_review',
+                      reward_removed = 1,
                       proof_file_id = EXCLUDED.proof_file_id,
                       proof_file_unique_id = EXCLUDED.proof_file_unique_id,
                       proof_message_id = EXCLUDED.proof_message_id,
@@ -861,7 +868,7 @@ def single_task_keyboard(user_id: int, task: dict, page: int = 0) -> InlineKeybo
     if open_link:
         rows.append([InlineKeyboardButton(t(user_id, "open_task_btn"), url=open_link)])
     task_type = task.get("task_type")
-    if task_type in ("reaction", "bot_link") or task.get("requires_proof"):
+    if task_type in PROOF_TASK_TYPES or task.get("requires_proof"):
         rows.append([InlineKeyboardButton(t(user_id, "send_proof_btn"), callback_data=f"proof_{task['id']}_{page}")])
     else:
         rows.append([InlineKeyboardButton(t(user_id, "verify_btn"), callback_data=f"verify_{task['id']}_{page}")])
@@ -875,6 +882,8 @@ def add_task_kind_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📢 Channel / Group", callback_data="admin_add_kind_channel")],
         [InlineKeyboardButton("👍 Reaction", callback_data="admin_add_kind_reaction")],
         [InlineKeyboardButton("🤖 Bot Link", callback_data="admin_add_kind_botlink")],
+        [InlineKeyboardButton("▶️ YouTube", callback_data="admin_add_kind_youtube")],
+        [InlineKeyboardButton("📘 Facebook", callback_data="admin_add_kind_facebook")],
         [InlineKeyboardButton("⬅️ Back" if lang == "en" else "⬅️ شاته", callback_data="back_main")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -968,9 +977,18 @@ def render_task_summary(user_id: int, task: dict) -> str:
             "channel": "چینل/ګروپ",
             "reaction": "رییکشن",
             "bot_link": "بوټ لینک",
+            "youtube": "یوټیوب",
+            "facebook": "فیسبوک",
         }.get(task_type, task_type)
         return f"📢 {task['channel_title']}\n⭐ انعام: {reward}\n🧩 ډول: {type_text}"
-    return f"📢 {task['channel_title']}\n⭐ Reward: {reward}\n🧩 Type: {task_type}"
+    type_text = {
+        "channel": "Channel / Group",
+        "reaction": "Reaction",
+        "bot_link": "Bot Link",
+        "youtube": "YouTube",
+        "facebook": "Facebook",
+    }.get(task_type, task_type)
+    return f"📢 {task['channel_title']}\n⭐ Reward: {reward}\n🧩 Type: {type_text}"
 
 
 async def send_task_list(update_or_query_message, bot, user_id: int, page: int = 0):
@@ -1266,6 +1284,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not task or task.get("status") != "active":
             await query.message.reply_text("Task not found.", reply_markup=main_menu(user.id))
             return
+        completion = get_task_completion(user.id, int(task_id))
+        if completion and completion.get("status") == "completed" and int(completion.get("reward_removed") or 0) == 0:
+            await query.message.reply_text(t(user.id, "task_already"), reply_markup=main_menu(user.id))
+            return
+        if completion and completion.get("status") == "pending_review":
+            await query.message.reply_text("⏳ Your proof is already pending admin review." if get_lang(user.id) == "en" else "⏳ ستاسو proof مخکې له مخکې د اډمین تایید ته منتظر دی.", reply_markup=main_menu(user.id))
+            return
         context.user_data["awaiting_proof_task_id"] = int(task_id)
         context.user_data["awaiting_proof_page"] = int(page)
         await query.message.reply_text(t(user.id, "proof_prompt"), reply_markup=main_menu(user.id))
@@ -1423,7 +1448,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         record_id = int(data.split("_")[-1])
         row = fetch_one(
             """
-            SELECT ut.*, t.reward_stars, t.channel_title
+            SELECT ut.*, t.reward_stars, t.channel_title, t.task_type, t.chat_username
             FROM user_tasks ut
             JOIN tasks t ON t.id = ut.task_id
             WHERE ut.id = %s
@@ -1432,6 +1457,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not row or row.get("status") != "pending_review":
             return
+        task_type = row.get("task_type") or "channel"
+        if task_type == "channel":
+            joined, check_reason = await check_join(context.bot, row.get("chat_username"), int(row["user_id"]))
+            if not joined:
+                await query.message.reply_text(f"Could not approve proof: {check_reason}")
+                return
         ok, reason = complete_exact_task_reward(int(row["user_id"]), int(row["task_id"]), decimalize(row["reward_stars"]))
         if not ok:
             await query.message.reply_text(f"Could not approve proof: {reason}")
@@ -1441,7 +1472,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (query.message.message_id, record_id),
         )
         try:
+            if query.message.photo:
+                caption = (query.message.caption or "") + "\n\n✅ APPROVED"
+                await query.edit_message_caption(caption=caption, reply_markup=None)
+            else:
+                await query.edit_message_text(text=(query.message.text or "") + "\n\n✅ APPROVED", reply_markup=None)
+        except Exception:
+            pass
+        try:
             await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])), reply_markup=main_menu(int(row["user_id"])))
+            await send_task_list(query.message, context.bot, int(row["user_id"]), page=0)
         except Exception:
             pass
         await query.message.reply_text(f"✅ Proof approved for user {row['user_id']} / task {row['task_id']}")
@@ -1466,6 +1506,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             ("Rejected by admin", now_iso(), query.message.message_id, record_id),
         )
+        try:
+            if query.message.photo:
+                caption = (query.message.caption or "") + "\n\n❌ REJECTED"
+                await query.edit_message_caption(caption=caption, reply_markup=None)
+            else:
+                await query.edit_message_text(text=(query.message.text or "") + "\n\n❌ REJECTED", reply_markup=None)
+        except Exception:
+            pass
         try:
             await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_rejected"), reply_markup=main_menu(int(row["user_id"])))
         except Exception:
@@ -1495,6 +1543,22 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["new_task_type"] = "bot_link"
         context.user_data["admin_flow"] = "addtask_bot_link"
         await query.message.reply_text(t(user.id, "addtask_bot_link"), reply_markup=cancel_reply_keyboard())
+        return
+
+    if data == "admin_add_kind_youtube":
+        if user.id != ADMIN_ID:
+            return
+        context.user_data["new_task_type"] = "youtube"
+        context.user_data["admin_flow"] = "addtask_link"
+        await query.message.reply_text("Send the YouTube channel/video link.", reply_markup=cancel_reply_keyboard())
+        return
+
+    if data == "admin_add_kind_facebook":
+        if user.id != ADMIN_ID:
+            return
+        context.user_data["new_task_type"] = "facebook"
+        context.user_data["admin_flow"] = "addtask_link"
+        await query.message.reply_text("Send the Facebook page/post link.", reply_markup=cancel_reply_keyboard())
         return
 
 
@@ -1895,12 +1959,20 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     if flow == "addtask_link":
-        username = extract_chat_username(text)
-        if not username:
-            await update.message.reply_text("Invalid link or @username", reply_markup=cancel_reply_keyboard())
-            return True
-        context.user_data["task_chat_username"] = username
-        context.user_data["task_link"] = task_url(text)
+        task_type = context.user_data.get("new_task_type") or "channel"
+        if task_type == "channel":
+            username = extract_chat_username(text)
+            if not username:
+                await update.message.reply_text("Invalid link or @username", reply_markup=cancel_reply_keyboard())
+                return True
+            context.user_data["task_chat_username"] = username
+            context.user_data["task_link"] = task_url(text)
+        else:
+            if not text.startswith("http"):
+                await update.message.reply_text("Send a valid public link.", reply_markup=cancel_reply_keyboard())
+                return True
+            context.user_data["task_chat_username"] = None
+            context.user_data["task_link"] = text
         context.user_data["admin_flow"] = "addtask_title"
         await update.message.reply_text(t(update.effective_user.id, "addtask_title"), reply_markup=cancel_reply_keyboard())
         return True
@@ -1948,7 +2020,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             link=context.user_data.get("task_link"),
             reward_stars=reward,
             chat_username=context.user_data.get("task_chat_username"),
-            requires_proof=(task_type in ("reaction", "bot_link")),
+            requires_proof=(task_type in PROOF_TASK_TYPES),
             post_link=context.user_data.get("task_post_link"),
             bot_link=context.user_data.get("task_bot_link"),
         )
