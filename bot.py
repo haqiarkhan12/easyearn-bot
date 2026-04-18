@@ -1437,49 +1437,50 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("proof_ok_"):
-        if user.id != ADMIN_ID:
-            return
-        record_id = int(data.split("_")[-1])
-        row = fetch_one(
-            """
-            SELECT ut.*, t.reward_stars, t.channel_title, t.task_type, t.chat_username, t.status AS task_status
-            FROM user_tasks ut
-            JOIN tasks t ON t.id = ut.task_id
-            WHERE ut.id = %s
-            """,
-            (record_id,),
-        )
-        if not row or row.get("status") != "pending_review":
-            return
-        if row.get("task_status") != "active":
-            await query.message.reply_text("Task not active anymore")
-            return
-        if row.get("task_type") == "reaction":
-            if not row.get("chat_username"):
-                await query.message.reply_text("Could not approve proof: reaction task has no channel username")
-                return
-            joined, reason = await check_join(context.bot, row["chat_username"], int(row["user_id"]))
-            if not joined:
-                await query.message.reply_text(f"Could not approve proof: {reason}")
-                return
-        ok, reason = complete_exact_task_reward(int(row["user_id"]), int(row["task_id"]), decimalize(row["reward_stars"]))
-        if not ok:
-            await query.message.reply_text(f"Could not approve proof: {reason}")
-            return
-        execute(
-            "UPDATE user_tasks SET admin_review_message_id = %s WHERE id = %s",
-            (query.message.message_id, record_id),
-        )
-        try:
-            await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])), reply_markup=main_menu(int(row["user_id"])))
-        except Exception:
-            pass
-        try:
-            await query.message.edit_caption(caption=(query.message.caption or "") + "\n\n✅ APPROVED")
-        except Exception:
-            pass
-        await query.message.reply_text(f"✅ Proof approved for user {row['user_id']} / task {row['task_id']}")
+    if user.id != ADMIN_ID:
         return
+
+    record_id = int(data.split("_")[-1])
+
+    row = fetch_one("SELECT * FROM user_tasks WHERE id = %s", (record_id,))
+    if not row:
+        await query.answer("Not found", show_alert=True)
+        return
+
+    if row.get("status") != "pending_review":
+        await query.answer("Already processed", show_alert=True)
+        return
+
+    reward = decimalize(row.get("rewarded_stars") or 0)
+
+    add_stars(int(row["user_id"]), reward)
+    add_stars(ADMIN_ID, -reward)
+
+    execute(
+        """
+        UPDATE user_tasks
+        SET status = 'completed',
+            reward_removed = 0,
+            last_checked_at = %s
+        WHERE id = %s
+        """,
+        (now_iso(), record_id)
+    )
+
+    try:
+        await query.edit_message_text("✅ Approved")
+    except Exception:
+        pass
+
+    try:
+        await context.bot.send_message(
+            int(row["user_id"]),
+            f"✅ ستاسو تاسک قبول شو +{pretty_amount(reward)}⭐"
+        )
+    except Exception:
+        pass
+
+    return
 
     if data.startswith("proof_no_"):
         if user.id != ADMIN_ID:
