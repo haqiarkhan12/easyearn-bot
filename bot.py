@@ -861,7 +861,7 @@ def single_task_keyboard(user_id: int, task: dict, page: int = 0) -> InlineKeybo
     if open_link:
         rows.append([InlineKeyboardButton(t(user_id, "open_task_btn"), url=open_link)])
     task_type = task.get("task_type")
-    if task_type in ("reaction", "bot_link") or task.get("requires_proof"):
+    if task_type in ("reaction", "bot_link", "facebook", "youtube") or task.get("requires_proof"):
         rows.append([InlineKeyboardButton(t(user_id, "send_proof_btn"), callback_data=f"proof_{task['id']}_{page}")])
     else:
         rows.append([InlineKeyboardButton(t(user_id, "verify_btn"), callback_data=f"verify_{task['id']}_{page}")])
@@ -875,6 +875,8 @@ def add_task_kind_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📢 Channel / Group", callback_data="admin_add_kind_channel")],
         [InlineKeyboardButton("👍 Reaction", callback_data="admin_add_kind_reaction")],
         [InlineKeyboardButton("🤖 Bot Link", callback_data="admin_add_kind_botlink")],
+        [InlineKeyboardButton("▶️ YouTube", callback_data="admin_add_kind_youtube")],
+        [InlineKeyboardButton("📘 Facebook", callback_data="admin_add_kind_facebook")],
         [InlineKeyboardButton("⬅️ Back" if lang == "en" else "⬅️ شاته", callback_data="back_main")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -1266,25 +1268,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not task or task.get("status") != "active":
             await query.message.reply_text("Task not found.", reply_markup=main_menu(user.id))
             return
-
-        if task.get("task_type") == "reaction":
-            if not task.get("chat_username"):
-                await query.message.reply_text(
-                    "❌ Reaction task is missing channel username. Re-add the task correctly." if get_lang(user.id) == "en" else "❌ د رییکشن تاسک د چینل یوزرنیم نه لري. تاسک بیا سم جوړ کړئ.",
-                    reply_markup=main_menu(user.id),
-                )
-                return
-            joined, reason = await check_join(context.bot, task["chat_username"], user.id)
-            if not joined:
-                if reason == "bot_not_admin":
-                    await query.message.reply_text(
-                        "❌ Bot is not admin in the channel/group." if get_lang(user.id) == "en" else "❌ بوټ په چینل/ګروپ کې اډمین نه دی.",
-                        reply_markup=main_menu(user.id),
-                    )
-                else:
-                    await query.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
-                return
-
         context.user_data["awaiting_proof_task_id"] = int(task_id)
         context.user_data["awaiting_proof_page"] = int(page)
         await query.message.reply_text(t(user.id, "proof_prompt"), reply_markup=main_menu(user.id))
@@ -1437,50 +1420,34 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("proof_ok_"):
-    if user.id != ADMIN_ID:
-        return
-
-    record_id = int(data.split("_")[-1])
-
-    row = fetch_one("SELECT * FROM user_tasks WHERE id = %s", (record_id,))
-    if not row:
-        await query.answer("Not found", show_alert=True)
-        return
-
-    if row.get("status") != "pending_review":
-        await query.answer("Already processed", show_alert=True)
-        return
-
-    reward = decimalize(row.get("rewarded_stars") or 0)
-
-    add_stars(int(row["user_id"]), reward)
-    add_stars(ADMIN_ID, -reward)
-
-    execute(
-        """
-        UPDATE user_tasks
-        SET status = 'completed',
-            reward_removed = 0,
-            last_checked_at = %s
-        WHERE id = %s
-        """,
-        (now_iso(), record_id)
-    )
-
-    try:
-        await query.edit_message_text("✅ Approved")
-    except Exception:
-        pass
-
-    try:
-        await context.bot.send_message(
-            int(row["user_id"]),
-            f"✅ ستاسو تاسک قبول شو +{pretty_amount(reward)}⭐"
+        if user.id != ADMIN_ID:
+            return
+        record_id = int(data.split("_")[-1])
+        row = fetch_one(
+            """
+            SELECT ut.*, t.reward_stars, t.channel_title
+            FROM user_tasks ut
+            JOIN tasks t ON t.id = ut.task_id
+            WHERE ut.id = %s
+            """,
+            (record_id,),
         )
-    except Exception:
-        pass
-
-    return
+        if not row or row.get("status") != "pending_review":
+            return
+        ok, reason = complete_exact_task_reward(int(row["user_id"]), int(row["task_id"]), decimalize(row["reward_stars"]))
+        if not ok:
+            await query.message.reply_text(f"Could not approve proof: {reason}")
+            return
+        execute(
+            "UPDATE user_tasks SET admin_review_message_id = %s WHERE id = %s",
+            (query.message.message_id, record_id),
+        )
+        try:
+            await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])), reply_markup=main_menu(int(row["user_id"])))
+        except Exception:
+            pass
+        await query.message.reply_text(f"✅ Proof approved for user {row['user_id']} / task {row['task_id']}")
+        return
 
     if data.startswith("proof_no_"):
         if user.id != ADMIN_ID:
@@ -1505,10 +1472,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_rejected"), reply_markup=main_menu(int(row["user_id"])))
         except Exception:
             pass
-        try:
-            await query.message.edit_caption(caption=(query.message.caption or "") + "\n\n❌ REJECTED")
-        except Exception:
-            pass
         await query.message.reply_text(f"❌ Proof rejected for user {row['user_id']} / task {row['task_id']}")
         return
 
@@ -1516,6 +1479,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "channel"
+        context.user_data["task_type"] = "channel"
         context.user_data["admin_flow"] = "addtask_link"
         await query.message.reply_text(t(user.id, "addtask_link"), reply_markup=cancel_reply_keyboard())
         return
@@ -1524,6 +1488,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "reaction"
+        context.user_data["task_type"] = "reaction"
         context.user_data["admin_flow"] = "addtask_post_link"
         await query.message.reply_text(t(user.id, "addtask_post_link"), reply_markup=cancel_reply_keyboard())
         return
@@ -1532,8 +1497,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user.id != ADMIN_ID:
             return
         context.user_data["new_task_type"] = "bot_link"
+        context.user_data["task_type"] = "bot_link"
         context.user_data["admin_flow"] = "addtask_bot_link"
         await query.message.reply_text(t(user.id, "addtask_bot_link"), reply_markup=cancel_reply_keyboard())
+        return
+
+
+    if data == "admin_add_kind_youtube":
+        if user.id != ADMIN_ID:
+            return
+        context.user_data["new_task_type"] = "youtube"
+        context.user_data["task_type"] = "youtube"
+        context.user_data["admin_flow"] = "addtask_post_link"
+        await query.message.reply_text(t(user.id, "addtask_post_link"), reply_markup=cancel_reply_keyboard())
+        return
+
+    if data == "admin_add_kind_facebook":
+        if user.id != ADMIN_ID:
+            return
+        context.user_data["new_task_type"] = "facebook"
+        context.user_data["task_type"] = "facebook"
+        context.user_data["admin_flow"] = "addtask_post_link"
+        await query.message.reply_text(t(user.id, "addtask_post_link"), reply_markup=cancel_reply_keyboard())
         return
 
 
@@ -1678,22 +1663,6 @@ async def proof_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("awaiting_proof_page", None)
         await update.message.reply_text("Task not found.", reply_markup=main_menu(user.id))
         return
-
-    if task.get("task_type") == "reaction":
-        if not task.get("chat_username"):
-            context.user_data.pop("awaiting_proof_task_id", None)
-            context.user_data.pop("awaiting_proof_page", None)
-            await update.message.reply_text("Reaction task is missing channel username.", reply_markup=main_menu(user.id))
-            return
-        joined, reason = await check_join(context.bot, task["chat_username"], user.id)
-        if not joined:
-            context.user_data.pop("awaiting_proof_task_id", None)
-            context.user_data.pop("awaiting_proof_page", None)
-            if reason == "bot_not_admin":
-                await update.message.reply_text("Bot is not admin in that channel/group.", reply_markup=main_menu(user.id))
-            else:
-                await update.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
-            return
 
     completion = get_task_completion(user.id, int(task_id))
     if completion and completion.get("status") == "completed" and int(completion.get("reward_removed") or 0) == 0:
@@ -1930,7 +1899,6 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "task_title",
             "task_post_link",
             "task_bot_link",
-            "addtask_reaction_channel",
         ]:
             context.user_data.pop(key, None)
         await update.message.reply_text(t(update.effective_user.id, "cancelled"), reply_markup=main_menu(update.effective_user.id))
@@ -1967,10 +1935,6 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return True
         context.user_data["task_post_link"] = text
         context.user_data["task_link"] = text
-        if (context.user_data.get("new_task_type") or "") == "reaction":
-            context.user_data["admin_flow"] = "addtask_reaction_channel"
-            await update.message.reply_text("Send channel/group @username for this post. Example: @mychannel", reply_markup=cancel_reply_keyboard())
-            return True
         context.user_data["admin_flow"] = "addtask_title"
         await update.message.reply_text(t(update.effective_user.id, "addtask_title"), reply_markup=cancel_reply_keyboard())
         return True
@@ -1981,17 +1945,6 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return True
         context.user_data["task_bot_link"] = text
         context.user_data["task_link"] = text
-        context.user_data["admin_flow"] = "addtask_title"
-        await update.message.reply_text(t(update.effective_user.id, "addtask_title"), reply_markup=cancel_reply_keyboard())
-        return True
-
-
-    if flow == "addtask_reaction_channel":
-        username = extract_chat_username(text)
-        if not username:
-            await update.message.reply_text("Invalid channel/group link or @username", reply_markup=cancel_reply_keyboard())
-            return True
-        context.user_data["task_chat_username"] = username
         context.user_data["admin_flow"] = "addtask_title"
         await update.message.reply_text(t(update.effective_user.id, "addtask_title"), reply_markup=cancel_reply_keyboard())
         return True
@@ -2011,7 +1964,9 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Invalid reward. Example: 0.5", reply_markup=cancel_reply_keyboard())
             return True
 
-        task_type = context.user_data.get("new_task_type") or "channel"
+        task_type = context.user_data.get("task_type") or context.user_data.get("new_task_type") or "channel"
+        if task_type == "bot":
+            task_type = "bot_link"
         title = context.user_data.get("task_title") or "Task"
         created_id = add_task_record(
             task_type=task_type,
@@ -2019,7 +1974,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             link=context.user_data.get("task_link"),
             reward_stars=reward,
             chat_username=context.user_data.get("task_chat_username"),
-            requires_proof=(task_type in ("reaction", "bot_link")),
+            requires_proof=(task_type in ("reaction", "bot_link", "facebook", "youtube")),
             post_link=context.user_data.get("task_post_link"),
             bot_link=context.user_data.get("task_bot_link"),
         )
@@ -2027,6 +1982,7 @@ async def admin_flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for key in [
             "admin_flow",
             "new_task_type",
+            "task_type",
             "task_chat_username",
             "task_link",
             "task_title",
