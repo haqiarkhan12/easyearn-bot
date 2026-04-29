@@ -44,7 +44,7 @@ WITHDRAW_OPTIONS = [Decimal("15"), Decimal("25"), Decimal("50")]
 BONUS_INTERVAL_HOURS = 24
 PROMO_INTERVAL_HOURS = 24
 LEAVE_CHECK_INTERVAL_HOURS = 2
-WITHDRAW_COOLDOWN_HOURS = 4
+WITHDRAW_COOLDOWN_HOURS = 1.5
 DEFAULT_PAGE_SIZE = 8
 
 PROMO_TEXT = (
@@ -731,8 +731,8 @@ def complete_exact_task_reward(user_id: int, task_id: int, reward: Decimal) -> t
     return True, "ok"
 
 
-def mark_proof_pending(user_id: int, task_id: int, photo_file_id: str, photo_unique_id: str, proof_message_id: int) -> None:
-    execute(
+def mark_proof_pending(user_id: int, task_id: int, photo_file_id: str, photo_unique_id: str, proof_message_id: int) -> int:
+    row = execute(
         """
         INSERT INTO user_tasks
             (user_id, task_id, rewarded_stars, reward_removed, status, created_at, last_checked_at,
@@ -744,10 +744,15 @@ def mark_proof_pending(user_id: int, task_id: int, photo_file_id: str, photo_uni
                       proof_file_unique_id = EXCLUDED.proof_file_unique_id,
                       proof_message_id = EXCLUDED.proof_message_id,
                       last_checked_at = EXCLUDED.last_checked_at,
-                      rejection_reason = NULL
-        """,
+                      rejection_reason = NULL,
+                      suspicious = 0
+        RETURNING id
+        """
+        ,
         (user_id, task_id, now_iso(), now_iso(), photo_file_id, photo_unique_id, proof_message_id),
+        returning=True,
     )
+    return int(row["id"])
 
 
 def set_task_removed(task_id: int) -> None:
@@ -891,6 +896,17 @@ def proof_review_keyboard(record_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def build_proof_review_caption(row: dict, approved: bool) -> str:
+    status_line = "✅ Status: Approved" if approved else "❌ Status: Rejected"
+    return (
+        f"📸 Proof submitted\n"
+        f"👤 User: {row['user_id']} / @{row.get('username') or 'no_username'}\n"
+        f"📝 Task: {row['channel_title']}\n"
+        f"🆔 Task ID: {row['task_id']}\n"
+        f"🕒 {now_pretty(row.get('created_at'))}\n"
+        f"{status_line}"
+    )
+
 # =====================================
 # TELEGRAM HELPERS
 # =====================================
@@ -1028,9 +1044,10 @@ async def daily_promo_post(context: ContextTypes.DEFAULT_TYPE):
 # PENALTIES / SECURITY
 # =====================================
 async def process_leave_penalties_for_user(bot, user_id: int):
+    check_cutoff = (now_utc() - timedelta(hours=LEAVE_CHECK_INTERVAL_HOURS)).isoformat()
     rows = fetch_all(
         """
-        SELECT ut.id, ut.task_id, ut.rewarded_stars, t.chat_username, t.task_type
+        SELECT ut.id, ut.task_id, ut.rewarded_stars, ut.last_checked_at, t.chat_username, t.task_type
         FROM user_tasks ut
         JOIN tasks t ON ut.task_id = t.id
         WHERE ut.user_id = %s
@@ -1038,18 +1055,20 @@ async def process_leave_penalties_for_user(bot, user_id: int):
           AND ut.reward_removed = 0
           AND t.status = 'active'
           AND t.task_type = 'channel'
+          AND (ut.last_checked_at IS NULL OR ut.last_checked_at = '' OR ut.last_checked_at <= %s)
         """,
-        (user_id,),
+        (user_id, check_cutoff),
     )
     if not rows:
         return
 
+    checked_at = now_iso()
     for row in rows:
         joined, _ = await check_join(bot, row["chat_username"], user_id)
         if joined:
             execute(
                 "UPDATE user_tasks SET last_checked_at = %s WHERE id = %s",
-                (now_iso(), row["id"]),
+                (checked_at, row["id"]),
             )
             continue
 
@@ -1069,7 +1088,7 @@ async def process_leave_penalties_for_user(bot, user_id: int):
                         last_checked_at = %s
                     WHERE id = %s
                     """,
-                    (now_iso(), row["id"]),
+                    (checked_at, row["id"]),
                 )
                 update_withdraw_eligibility(user_id, conn=conn)
         try:
@@ -1425,36 +1444,67 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         record_id = int(data.split("_")[-1])
         row = fetch_one(
             """
-            SELECT ut.*, t.reward_stars, t.channel_title
+            SELECT ut.*, t.reward_stars, t.channel_title, u.username
             FROM user_tasks ut
             JOIN tasks t ON t.id = ut.task_id
+            LEFT JOIN users u ON u.user_id = ut.user_id
             WHERE ut.id = %s
             """,
             (record_id,),
         )
-        if not row or row.get("status") != "pending_review":
+        if not row:
+            await query.answer("Proof not found", show_alert=True)
+            return
+        if row.get("status") != "pending_review":
+            await query.answer("Already processed", show_alert=True)
             return
         ok, reason = complete_exact_task_reward(int(row["user_id"]), int(row["task_id"]), decimalize(row["reward_stars"]))
         if not ok:
-            await query.message.reply_text(f"Could not approve proof: {reason}")
+            await query.answer(f"Could not approve proof: {reason}", show_alert=True)
             return
         execute(
-            "UPDATE user_tasks SET admin_review_message_id = %s WHERE id = %s",
-            (query.message.message_id, record_id),
+            "UPDATE user_tasks SET admin_review_message_id = %s, last_checked_at = %s WHERE id = %s",
+            (query.message.message_id, now_iso(), record_id),
         )
         try:
-            await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])), reply_markup=main_menu(int(row["user_id"])))
+            await query.message.edit_caption(
+                caption=build_proof_review_caption(row, approved=True),
+                reply_markup=None,
+            )
+        except Exception:
+            try:
+                await query.message.edit_text(build_proof_review_caption(row, approved=True), reply_markup=None)
+            except Exception:
+                pass
+        try:
+            await context.bot.send_message(
+                int(row["user_id"]),
+                t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])),
+                reply_markup=main_menu(int(row["user_id"])),
+            )
         except Exception:
             pass
-        await query.message.reply_text(f"✅ Proof approved for user {row['user_id']} / task {row['task_id']}")
         return
 
     if data.startswith("proof_no_"):
         if user.id != ADMIN_ID:
             return
         record_id = int(data.split("_")[-1])
-        row = fetch_one("SELECT * FROM user_tasks WHERE id = %s", (record_id,))
-        if not row or row.get("status") != "pending_review":
+        row = fetch_one(
+            """
+            SELECT ut.*, t.channel_title, u.username
+            FROM user_tasks ut
+            JOIN tasks t ON t.id = ut.task_id
+            LEFT JOIN users u ON u.user_id = ut.user_id
+            WHERE ut.id = %s
+            """,
+            (record_id,),
+        )
+        if not row:
+            await query.answer("Proof not found", show_alert=True)
+            return
+        if row.get("status") != "pending_review":
+            await query.answer("Already processed", show_alert=True)
             return
         execute(
             """
@@ -1464,15 +1514,24 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rejection_reason = %s,
                 last_checked_at = %s,
                 admin_review_message_id = %s
-            WHERE id = %s
+            WHERE id = %s AND status = 'pending_review'
             """,
             ("Rejected by admin", now_iso(), query.message.message_id, record_id),
         )
         try:
+            await query.message.edit_caption(
+                caption=build_proof_review_caption(row, approved=False),
+                reply_markup=None,
+            )
+        except Exception:
+            try:
+                await query.message.edit_text(build_proof_review_caption(row, approved=False), reply_markup=None)
+            except Exception:
+                pass
+        try:
             await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_rejected"), reply_markup=main_menu(int(row["user_id"])))
         except Exception:
             pass
-        await query.message.reply_text(f"❌ Proof rejected for user {row['user_id']} / task {row['task_id']}")
         return
 
     if data == "admin_add_kind_channel":
@@ -1672,7 +1731,7 @@ async def proof_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     photo = update.message.photo[-1]
-    mark_proof_pending(user.id, int(task_id), photo.file_id, photo.file_unique_id, update.message.message_id)
+    record_id = mark_proof_pending(user.id, int(task_id), photo.file_id, photo.file_unique_id, update.message.message_id)
 
     caption = (
         f"📸 Proof submitted\n"
@@ -1687,13 +1746,13 @@ async def proof_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=ADMIN_ID,
             photo=photo.file_id,
             caption=caption,
-            reply_markup=proof_review_keyboard(get_task_completion(user.id, int(task_id))["id"]),
+            reply_markup=proof_review_keyboard(record_id),
         )
     except Exception:
         pass
 
     if sent:
-        execute("UPDATE user_tasks SET admin_review_message_id = %s WHERE user_id = %s AND task_id = %s", (sent.message_id, user.id, int(task_id)))
+        execute("UPDATE user_tasks SET admin_review_message_id = %s WHERE id = %s", (sent.message_id, record_id))
 
     context.user_data.pop("awaiting_proof_task_id", None)
     context.user_data.pop("awaiting_proof_page", None)
