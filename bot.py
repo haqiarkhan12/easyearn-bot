@@ -1,11 +1,11 @@
 import logging
 import os
 import re
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
-from collections import defaultdict
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -186,7 +186,7 @@ def is_private(update: Update) -> bool:
 
 
 # =====================================
-# TEXTS
+# TEXTS (PS, EN, FA)
 # =====================================
 TEXTS = {
     "ps": {
@@ -215,7 +215,7 @@ TEXTS = {
         "new_task": "📢 نوی تاسک اضافه شو!\n\n{title}\n⭐ انعام: {reward}",
         "stats_admin": "👥 ټول یوزران: {users}\n🆕 د نن یوزران: {today}\n⭐ د ټولو یوزرانو ستوري: {stars}\n⭐ د اډمین ستوري: {admin_stars}\n📝 فعال تاسکونه: {tasks}",
         "admin_only": "دا برخه یوازې اډمین ته ده.",
-        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/taskslist\n/taskstats\n/ban USER_ID[reason]\n/unban USER_ID",
+        "admin_help": "🛠 Admin Commands\n\n/users\n/refstats\n/withdraws\n/botstats\n/taskslist\n/taskstats\n/ban USER_ID [reason]\n/unban USER_ID",
         "broadcast_prompt": "هغه مسج ولیکئ چې ټولو users ته ولاړ شي.",
         "addtask_kind": "د task ډول انتخاب کړئ:",
         "addtask_link": "د چینل/ګروپ لینک یا @username راولېږئ.",
@@ -291,6 +291,7 @@ TEXTS = {
         "proof_approved": "✅ Your proof was approved.\n⭐ {stars}",
         "banned": "⛔ Your account is banned. Contact support for help.",
         "all_tasks_done": "✅ You have completed all available tasks",
+        "withdraw_sent": "✅ Withdrawal request sent: {amount} ⭐",
         "withdraw_support_no_username": "⚠️ You do not have a username. Also contact support for withdrawal: {username}",
     },
     "fa": {
@@ -319,7 +320,7 @@ TEXTS = {
         "new_task": "📢 تسک جدید اضافه شد!\n\n{title}\n⭐ پاداش: {reward}",
         "stats_admin": "👥 کل کاربران: {users}\n🆕 کاربران امروز: {today}\n⭐ مجموع ستاره کاربران: {stars}\n⭐ ستاره ادمین: {admin_stars}\n📝 تسک‌های فعال: {tasks}",
         "admin_only": "این بخش فقط مخصوص ادمین است.",
-        "admin_help": "🛠 دستورات ادمین\n\n/users\n/refstats\n/withdraws\n/botstats\n/taskslist\n/taskstats\n/ban USER_ID[reason]\n/unban USER_ID",
+        "admin_help": "🛠 دستورات ادمین\n\n/users\n/refstats\n/withdraws\n/botstats\n/taskslist\n/taskstats\n/ban USER_ID [reason]\n/unban USER_ID",
         "broadcast_prompt": "پیامی که می‌خواهید ارسال کنید را بنویسید.",
         "addtask_kind": "نوع تسک را انتخاب کنید:",
         "addtask_link": "لینک کانال/گروه یا نام کاربری را بفرستید.",
@@ -482,7 +483,16 @@ def init_db():
 
     safe_exec("ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS reason TEXT")
 
-    admin = fetch_one("SELECT user_id FROM users WHERE user_id = %s", (ADMIN_ID,))
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_users_referrer_id ON users(referrer_id)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_user ON user_tasks(user_id)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_task ON user_tasks(task_id)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
+    safe_exec("CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)")
+
+    admin = fetch_one("SELECT user_id, stars FROM users WHERE user_id = %s", (ADMIN_ID,))
     if not admin:
         execute(
             """
@@ -491,6 +501,8 @@ def init_db():
             """,
             (ADMIN_ID, "admin", "Admin", ADMIN_START_STARS, now_iso()),
         )
+    else:
+        execute("UPDATE users SET stars = %s WHERE user_id = %s", (ADMIN_START_STARS, ADMIN_ID))
 
 
 # =====================================
@@ -724,6 +736,9 @@ def complete_exact_task_reward(user_id: int, task_id: int, reward: Decimal) -> t
             if admin_stars < reward:
                 return False, "admin_low"
 
+            cur.execute("SELECT stars FROM users WHERE user_id = %s FOR UPDATE", (user_id,))
+            cur.fetchone()
+
             cur.execute("UPDATE users SET stars = COALESCE(stars, 0) - %s WHERE user_id = %s", (reward, ADMIN_ID))
             cur.execute("UPDATE users SET stars = COALESCE(stars, 0) + %s WHERE user_id = %s", (reward, user_id))
 
@@ -834,17 +849,46 @@ def withdraw_cooldown_remaining(user_id: int) -> Optional[timedelta]:
 # =====================================
 # UI
 # =====================================
+def get_button_text(key: str, lang: str) -> str:
+    # Mapping for menu navigation to solve broken button issues
+    mapping = {
+        "ps": {
+            "withdraw": "🏧 Withdraw", "stars": "⭐ My Stars", "referral": "👥 Referral", "tasks": "📝 Tasks",
+            "bonus": "🎁 Bonus", "lang": "🌐 Language", "about": "ℹ️ About Us", "support": "📞 Support",
+            "stats": "📊 Statistics", "broadcast": "📣 Broadcast", "add_task": "🛠 Add Task", "remove_task": "🗑 Remove Task", "add_balance": "➕ Add Balance"
+        },
+        "en": {
+            "withdraw": "🏧 Withdraw", "stars": "⭐ My Stars", "referral": "👥 Referral", "tasks": "📝 Tasks",
+            "bonus": "🎁 Bonus", "lang": "🌐 Language", "about": "ℹ️ About Us", "support": "📞 Support",
+            "stats": "📊 Statistics", "broadcast": "📣 Broadcast", "add_task": "🛠 Add Task", "remove_task": "🗑 Remove Task", "add_balance": "➕ Add Balance"
+        },
+        "fa": {
+            "withdraw": "🏧 Withdraw", "stars": "⭐ My Stars", "referral": "👥 Referral", "tasks": "📝 Tasks",
+            "bonus": "🎁 Bonus", "lang": "🌐 Language", "about": "ℹ️ About Us", "support": "📞 Support",
+            "stats": "📊 Statistics", "broadcast": "📣 Broadcast", "add_task": "🛠 Add Task", "remove_task": "🗑 Remove Task", "add_balance": "➕ Add Balance"
+        }
+    }
+    return mapping.get(lang, mapping["ps"]).get(key, key)
+
+def get_action_from_button(text: str) -> Optional[str]:
+    # Reverse lookup
+    for lang in["ps", "en", "fa"]:
+        for k, v in get_button_text("", lang).items() if hasattr(get_button_text, 'mapping') else {
+            "withdraw": "🏧 Withdraw", "stars": "⭐ My Stars", "referral": "👥 Referral", "tasks": "📝 Tasks",
+            "bonus": "🎁 Bonus", "lang": "🌐 Language", "about": "ℹ️ About Us", "support": "📞 Support",
+            "stats": "📊 Statistics", "broadcast": "📣 Broadcast", "add_task": "🛠 Add Task", "remove_task": "🗑 Remove Task", "add_balance": "➕ Add Balance"
+        }.items():
+            if text == v: return k
+    return None
+
 def main_menu(user_id: int) -> ReplyKeyboardMarkup:
-    keyboard =[
-        ["🏧 Withdraw", "⭐ My Stars"],
-        ["👥 Referral", "📝 Tasks"],
-        ["🎁 Bonus", "🌐 Language"],
-        ["ℹ️ About Us", "📞 Support"],
+    lang = get_lang(user_id)
+    keyboard = [[get_button_text("withdraw", lang), get_button_text("stars", lang)],[get_button_text("referral", lang), get_button_text("tasks", lang)],[get_button_text("bonus", lang), get_button_text("lang", lang)],[get_button_text("about", lang), get_button_text("support", lang)],
     ]
     if user_id == ADMIN_ID:
-        keyboard.insert(0, ["📊 Statistics", "📣 Broadcast"])
-        keyboard.insert(1,["🛠 Add Task", "🗑 Remove Task"])
-        keyboard.insert(2, ["➕ Add Balance"])
+        keyboard.insert(0,[get_button_text("stats", lang), get_button_text("broadcast", lang)])
+        keyboard.insert(1,[get_button_text("add_task", lang), get_button_text("remove_task", lang)])
+        keyboard.insert(2, [get_button_text("add_balance", lang)])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
@@ -867,10 +911,8 @@ def force_join_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def withdraw_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    lang = get_lang(user_id)
-    back_txt = "⬅️ Back" if lang == "en" else ("⬅️ شاته" if lang == "ps" else "⬅️ بازگشت")
     rows = [[InlineKeyboardButton(f"⭐ {pretty_amount(v)} Stars", callback_data=f"withdraw_{pretty_amount(v)}")] for v in WITHDRAW_OPTIONS]
-    rows.append([InlineKeyboardButton(back_txt, callback_data="back_main")])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -878,13 +920,9 @@ def task_list_keyboard(user_id: int, tasks: list[dict], page: int = 0) -> Inline
     rows: list[list[InlineKeyboardButton]] =[]
     start = page * DEFAULT_PAGE_SIZE
     items = tasks[start : start + DEFAULT_PAGE_SIZE]
-    lang = get_lang(user_id)
-    back_txt = "⬅️ Back" if lang == "en" else ("⬅️ شاته" if lang == "ps" else "⬅️ بازگشت")
-    
     for item in items:
         task_id = int(item["id"])
         rows.append([InlineKeyboardButton(f"{task_id}. {item['channel_title']}", callback_data=f"task_open_{task_id}_{page}")])
-    
     nav_row: list[InlineKeyboardButton] =[]
     if page > 0:
         nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"tasks_page_{page - 1}"))
@@ -892,13 +930,11 @@ def task_list_keyboard(user_id: int, tasks: list[dict], page: int = 0) -> Inline
         nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"tasks_page_{page + 1}"))
     if nav_row:
         rows.append(nav_row)
-    rows.append([InlineKeyboardButton(back_txt, callback_data="back_main")])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
 
 def single_task_keyboard(user_id: int, task: dict, page: int = 0) -> InlineKeyboardMarkup:
-    lang = get_lang(user_id)
-    back_txt = "⬅️ Back" if lang == "en" else ("⬅️ شاته" if lang == "ps" else "⬅️ بازگشت")
     rows: list[list[InlineKeyboardButton]] =[]
     open_link = task.get("post_link") or task.get("bot_link") or task.get("link")
     if open_link:
@@ -908,15 +944,13 @@ def single_task_keyboard(user_id: int, task: dict, page: int = 0) -> InlineKeybo
         rows.append([InlineKeyboardButton(t(user_id, "send_proof_btn"), callback_data=f"proof_{task['id']}_{page}")])
     else:
         rows.append([InlineKeyboardButton(t(user_id, "verify_btn"), callback_data=f"verify_{task['id']}_{page}")])
-    rows.append([InlineKeyboardButton(back_txt, callback_data=f"tasks_page_{page}")])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"tasks_page_{page}")])
     return InlineKeyboardMarkup(rows)
 
 
 def add_task_kind_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    lang = get_lang(user_id)
-    back_txt = "⬅️ Back" if lang == "en" else ("⬅️ شاته" if lang == "ps" else "⬅️ بازگشت")
-    rows = [[InlineKeyboardButton("📢 Channel / Group", callback_data="admin_add_kind_channel")],[InlineKeyboardButton("👍 Reaction", callback_data="admin_add_kind_reaction")],[InlineKeyboardButton("🤖 Bot Link", callback_data="admin_add_kind_botlink")],[InlineKeyboardButton("▶️ YouTube", callback_data="admin_add_kind_youtube")],[InlineKeyboardButton("📘 Facebook", callback_data="admin_add_kind_facebook")],
-        [InlineKeyboardButton(back_txt, callback_data="back_main")],
+    rows =[
+        [InlineKeyboardButton("📢 Channel / Group", callback_data="admin_add_kind_channel")],[InlineKeyboardButton("👍 Reaction", callback_data="admin_add_kind_reaction")],[InlineKeyboardButton("🤖 Bot Link", callback_data="admin_add_kind_botlink")],[InlineKeyboardButton("▶️ YouTube", callback_data="admin_add_kind_youtube")],[InlineKeyboardButton("📘 Facebook", callback_data="admin_add_kind_facebook")],[InlineKeyboardButton("⬅️ Back", callback_data="back_main")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -1017,8 +1051,6 @@ def render_task_summary(user_id: int, task: dict) -> str:
     task_type = task.get("task_type") or "channel"
     if lang == "ps":
         return f"📢 {task['channel_title']}\n⭐ انعام: {reward}\n🧩 ډول: {task_type}"
-    elif lang == "fa":
-        return f"📢 {task['channel_title']}\n⭐ پاداش: {reward}\n🧩 نوع: {task_type}"
     return f"📢 {task['channel_title']}\n⭐ Reward: {reward}\n🧩 Type: {task_type}"
 
 
@@ -1031,7 +1063,7 @@ async def send_task_list(update_or_query_message, bot, user_id: int, page: int =
         return
 
     lang = get_lang(user_id)
-    title = "📋 Available Tasks" if lang == "en" else ("📋 موجود تاسکونه" if lang == "ps" else "📋 تسک‌های موجود")
+    title = "📋 Available Tasks" if lang == "en" else "📋 موجود تاسکونه"
     sent = await update_or_query_message.reply_text(
         title,
         reply_markup=task_list_keyboard(user_id, tasks, page=page),
@@ -1190,6 +1222,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (referrer_id, user.id),
         )
 
+    context.user_data.pop("admin_flow", None)
+    context.user_data.pop("awaiting_proof_task_id", None)
+
     if not await guard_user_access(update, context):
         return
 
@@ -1213,7 +1248,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "check_force_join":
         if await check_force_join_all(context.bot, user.id):
             await query.message.reply_text(
-                "✅ Access granted.",
+                "✅ Access granted." if get_lang(user.id) == "en" else "✅ لاسرسی درکړل شو",
                 reply_markup=main_menu(user.id),
             )
         else:
@@ -1225,10 +1260,19 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
         return
 
-    if data.startswith("lang_"):
-        lang = data.split("_")[1]
-        set_lang(user.id, lang)
-        await query.message.reply_text("✅ Language changed", reply_markup=main_menu(user.id))
+    if data == "lang_en":
+        set_lang(user.id, "en")
+        await query.message.reply_text("✅ Language changed to English", reply_markup=main_menu(user.id))
+        return
+
+    if data == "lang_ps":
+        set_lang(user.id, "ps")
+        await query.message.reply_text("✅ ژبه پښتو ته بدله شوه", reply_markup=main_menu(user.id))
+        return
+        
+    if data == "lang_fa":
+        set_lang(user.id, "fa")
+        await query.message.reply_text("✅ زبان به فارسی تغییر یافت", reply_markup=main_menu(user.id))
         return
 
     if data.startswith("tasks_page_"):
@@ -1268,27 +1312,49 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(t(user.id, "task_already"), reply_markup=main_menu(user.id))
             return
 
+        if task.get("task_type") != "channel":
+            await query.message.reply_text(t(user.id, "task_bot_fail"), reply_markup=main_menu(user.id))
+            return
+
         joined, reason = await check_join(context.bot, task["chat_username"], user.id)
         if not joined:
-            await query.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
+            if reason == "bot_not_admin":
+                await query.message.reply_text(
+                    "❌ Bot is not admin in the channel/group." if get_lang(user.id) == "en" else "❌ بوټ په چینل/ګروپ کې اډمین نه دی.",
+                    reply_markup=main_menu(user.id),
+                )
+            else:
+                await query.message.reply_text(t(user.id, "task_fail"), reply_markup=main_menu(user.id))
             return
 
         ok, status = complete_exact_task_reward(user.id, int(task_id), decimalize(task["reward_stars"]))
         if not ok:
-            await query.message.reply_text(t(user.id, "admin_low" if status == "admin_low" else "task_already"), reply_markup=main_menu(user.id))
+            if status == "already":
+                await query.message.reply_text(t(user.id, "task_already"), reply_markup=main_menu(user.id))
+            else:
+                await query.message.reply_text(t(user.id, "admin_low"), reply_markup=main_menu(user.id))
             return
 
         await maybe_cleanup_old_task_message(context.bot, user.id)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         await query.message.reply_text(
             t(user.id, "task_done", stars=pretty_amount(task["reward_stars"])),
             reply_markup=main_menu(user.id),
         )
+        await send_task_list(query.message, context.bot, user.id, page=int(page))
         return
 
     if data.startswith("proof_"):
         if not await guard_user_access(update, context):
             return
         _, task_id, page = data.split("_")
+        task = get_task(int(task_id))
+        if not task or task.get("status") != "active":
+            await query.message.reply_text("Task not found.", reply_markup=main_menu(user.id))
+            return
         context.user_data["awaiting_proof_task_id"] = int(task_id)
         context.user_data["awaiting_proof_page"] = int(page)
         await query.message.reply_text(t(user.id, "proof_prompt"), reply_markup=main_menu(user.id))
@@ -1297,24 +1363,35 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("withdraw_"):
         if not await guard_user_access(update, context):
             return
+        
+        # Check Username Requirement
         user_row = get_user(user.id)
-        if not user_row.get("username"):
+        if not user_row or not user_row.get("username"):
             await query.message.reply_text(t(user.id, "withdraw_no_username"), reply_markup=main_menu(user.id))
             return
 
         amount = decimalize(data.split("_")[-1])
+        await process_leave_penalties_for_user(context.bot, user.id)
         stars = get_stars(user.id)
         if stars < amount:
             await query.message.reply_text(t(user.id, "withdraw_low"), reply_markup=main_menu(user.id))
             return
-        
         remaining = withdraw_cooldown_remaining(user.id)
         if remaining and remaining.total_seconds() > 0:
-            await query.message.reply_text(t(user.id, "withdraw_cooldown", remaining=human_remaining(remaining)), reply_markup=main_menu(user.id))
+            await query.message.reply_text(
+                t(user.id, "withdraw_cooldown", remaining=human_remaining(remaining)),
+                reply_markup=main_menu(user.id),
+            )
             return
 
         with get_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT stars FROM users WHERE user_id = %s FOR UPDATE", (user.id,))
+                row = cur.fetchone()
+                fresh_stars = decimalize((row or {}).get("stars") or 0)
+                if fresh_stars < amount:
+                    await query.message.reply_text(t(user.id, "withdraw_low"), reply_markup=main_menu(user.id))
+                    return
                 cur.execute("UPDATE users SET stars = COALESCE(stars, 0) - %s WHERE user_id = %s", (amount, user.id))
                 cur.execute(
                     """
@@ -1327,7 +1404,57 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wd_id = int(cur.fetchone()["id"])
                 update_withdraw_eligibility(user.id, conn=conn)
 
+        username = f"@{user_row['username']}"
+        msg = (
+            f"{t(user.id, 'new_withdraw')}\n\n"
+            f"👤 User: {username}\n"
+            f"🆔 UserID: {user.id}\n"
+            f"💰 Amount: {pretty_amount(amount)} ⭐\n"
+            f"🕒 Time: {now_pretty()}\n"
+            f"⏳ Status: Pending"
+        )
+        admin_kb = InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton("✅ Approve", callback_data=f"admin_wd_ok_{wd_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"admin_wd_no_{wd_id}"),
+            ]]
+        )
+        try:
+            sent = await context.bot.send_message(ADMIN_ID, msg, reply_markup=admin_kb)
+            execute("UPDATE withdrawals SET admin_message_id = %s WHERE id = %s", (sent.message_id, wd_id))
+        except Exception:
+            pass
+        try:
+            sent = await context.bot.send_message(PAYMENT_CHANNEL, msg)
+            execute("UPDATE withdrawals SET channel_message_id = %s WHERE id = %s", (sent.message_id, wd_id))
+        except Exception:
+            pass
+
         await query.message.reply_text(t(user.id, "withdraw_sent"), reply_markup=main_menu(user.id))
+        return
+
+    if data.startswith("admin_wd_ok_"):
+        if user.id != ADMIN_ID: return
+        wd_id = int(data.split("_")[-1])
+        wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
+        if not wd or wd["status"] != "pending": return
+        execute("UPDATE withdrawals SET status = 'approved', approved_at = %s WHERE id = %s", (now_iso(), wd_id))
+        await context.bot.send_message(int(wd["user_id"]), f"✅ Your withdrawal has been approved: {pretty_amount(wd['amount_stars'])} ⭐", reply_markup=main_menu(int(wd["user_id"])))
+        await query.message.reply_text("✅ Withdrawal approved.")
+        return
+
+    if data.startswith("admin_wd_no_"):
+        if user.id != ADMIN_ID: return
+        wd_id = int(data.split("_")[-1])
+        wd = fetch_one("SELECT * FROM withdrawals WHERE id = %s", (wd_id,))
+        if not wd or wd["status"] != "pending": return
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET stars = COALESCE(stars, 0) + %s WHERE user_id = %s", (decimalize(wd["amount_stars"]), int(wd["user_id"])))
+                cur.execute("UPDATE withdrawals SET status = 'rejected', rejected_at = %s WHERE id = %s", (now_iso(), wd_id))
+                update_withdraw_eligibility(int(wd["user_id"]), conn=conn)
+        await context.bot.send_message(int(wd["user_id"]), f"❌ Your withdrawal has been rejected: {pretty_amount(wd['amount_stars'])} ⭐", reply_markup=main_menu(int(wd["user_id"])))
+        await query.message.reply_text("❌ Withdrawal rejected.")
         return
 
     if data.startswith("proof_ok_"):
@@ -1336,84 +1463,100 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = fetch_one("SELECT ut.*, t.reward_stars, t.channel_title FROM user_tasks ut JOIN tasks t ON t.id = ut.task_id WHERE ut.id = %s", (record_id,))
         if row and row["status"] == "pending_review":
             complete_exact_task_reward(int(row["user_id"]), int(row["task_id"]), decimalize(row["reward_stars"]))
-            execute("UPDATE user_tasks SET status = 'completed' WHERE id = %s", (record_id,))
-            await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])))
-            await query.message.edit_caption(caption="✅ Approved", reply_markup=None)
+            execute("UPDATE user_tasks SET status = 'completed', admin_review_message_id = %s WHERE id = %s", (query.message.message_id, record_id))
+            try: await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_approved", stars=pretty_amount(row["reward_stars"])), reply_markup=main_menu(int(row["user_id"])))
+            except: pass
+            await query.message.edit_caption(caption=build_proof_review_caption(row, approved=True), reply_markup=None)
         return
 
     if data.startswith("proof_no_"):
         if user.id != ADMIN_ID: return
         record_id = int(data.split("_")[-1])
-        execute("UPDATE user_tasks SET status = 'rejected', reward_removed = 1 WHERE id = %s", (record_id,))
-        row = fetch_one("SELECT user_id FROM user_tasks WHERE id = %s", (record_id,))
-        if row:
-            await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_rejected"))
-            await query.message.edit_caption(caption="❌ Rejected", reply_markup=None)
+        row = fetch_one("SELECT ut.*, t.channel_title FROM user_tasks ut JOIN tasks t ON t.id = ut.task_id WHERE ut.id = %s", (record_id,))
+        if row and row["status"] == "pending_review":
+            execute("UPDATE user_tasks SET status = 'rejected', reward_removed = 1, admin_review_message_id = %s WHERE id = %s", (query.message.message_id, record_id))
+            try: await context.bot.send_message(int(row["user_id"]), t(int(row["user_id"]), "proof_rejected"), reply_markup=main_menu(int(row["user_id"])))
+            except: pass
+            await query.message.edit_caption(caption=build_proof_review_caption(row, approved=False), reply_markup=None)
         return
 
 
 # =====================================
-# USER ROUTER
+# USER ROUTER (Fixed Menu Routing)
 # =====================================
 async def user_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update): return
     if not await guard_user_access(update, context): return
-
+    
+    # Promo Logic (10 messages per chat)
     chat_id = update.effective_chat.id
     promo_msg_counter[chat_id] += 1
     if promo_msg_counter[chat_id] >= 10:
-        await update.message.reply_text(PROMO_TEXT)
         promo_msg_counter[chat_id] = 0
+        await update.message.reply_text(PROMO_TEXT)
 
     user = update.effective_user
     text = (update.message.text or "").strip()
 
-    if text == "⭐ My Stars":
+    # Optimized Multilingual Routing
+    is_admin = (user.id == ADMIN_ID)
+    
+    # Define trigger mappings
+    if text in["📊 Statistics", "📊 احصایې", "📊 آمار"]:
+        if not is_admin: return
+        total_users = fetch_one("SELECT COUNT(*) AS c FROM users")
+        await update.message.reply_text(f"Total Users: {total_users['c']}", reply_markup=main_menu(user.id))
+    elif text in["🛠 Add Task", "🛠 تاسک اضافه کول", "🛠 افزودن تسک"]:
+        if not is_admin: return
+        context.user_data["admin_flow"] = "addtask_kind"
+        await update.message.reply_text("Choose kind:", reply_markup=add_task_kind_keyboard(user.id))
+    elif text in["🏧 Withdraw", "🏧 د پیسو ایستل", "🏧 برداشت"]:
+        await process_leave_penalties_for_user(context.bot, user.id)
+        await update.message.reply_text(t(user.id, "withdraw_choose"), reply_markup=withdraw_keyboard(user.id))
+    elif text in["⭐ My Stars", "⭐ زما ستوري", "⭐ ستاره‌های من"]:
         await update.message.reply_text(t(user.id, "my_stars", stars=pretty_amount(get_stars(user.id))), reply_markup=main_menu(user.id))
-    elif text == "📝 Tasks":
+    elif text in["📝 Tasks", "📝 تاسکونه", "📝 تسک‌ها"]:
         await send_task_list(update.message, context.bot, user.id, page=0)
-    elif text == "🎁 Bonus":
+    elif text in["🎁 Bonus", "🎁 ورځنی بونس", "🎁 پاداش"]:
         row = get_user(user.id)
         last_bonus = parse_dt((row or {}).get("last_bonus_at"))
         if last_bonus and now_utc() < last_bonus + timedelta(hours=BONUS_INTERVAL_HOURS):
-            await update.message.reply_text(t(user.id, "bonus_wait", remaining=human_remaining((last_bonus + timedelta(hours=BONUS_INTERVAL_HOURS)) - now_utc())), reply_markup=main_menu(user.id))
+            await update.message.reply_text(t(user.id, "bonus_wait", remaining=human_remaining((last_bonus + timedelta(hours=BONUS_INTERVAL_HOURS)) - now_utc())))
         else:
             add_stars(user.id, DAILY_BONUS_STARS)
             execute("UPDATE users SET last_bonus_at = %s WHERE user_id = %s", (now_iso(), user.id))
-            await update.message.reply_text(t(user.id, "bonus_added", stars=pretty_amount(DAILY_BONUS_STARS)), reply_markup=main_menu(user.id))
-    elif text == "🏧 Withdraw":
-        await update.message.reply_text(t(user.id, "withdraw_choose"), reply_markup=withdraw_keyboard(user.id))
-    elif text == "🌐 Language":
+            await update.message.reply_text(t(user.id, "bonus_added", stars=pretty_amount(DAILY_BONUS_STARS)))
+    elif text in ["🌐 Language", "🌐 ژبه", "🌐 زبان"]:
         await update.message.reply_text(t(user.id, "choose_lang"), reply_markup=lang_keyboard())
+    elif text in ["📞 Support", "📞 سپورټ", "📞 پشتیبانی"]:
+        await update.message.reply_text(t(user.id, "support", username=SUPPORT_USERNAME))
     else:
         await update.message.reply_text(t(user.id, "intro"), reply_markup=main_menu(user.id))
 
 
 # =====================================
-# MEDIA / PROOF FLOW
+# MAIN
 # =====================================
-async def proof_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_private(update): return
-    task_id = context.user_data.get("awaiting_proof_task_id")
-    if not task_id: return
-    
-    photo = update.message.photo[-1]
-    record_id = mark_proof_pending(update.effective_user.id, int(task_id), photo.file_id, photo.file_unique_id, update.message.message_id)
-    
-    admin_kb = proof_review_keyboard(record_id)
-    await context.bot.send_photo(ADMIN_ID, photo.file_id, caption=f"Proof from {update.effective_user.id}", reply_markup=admin_kb)
-    
-    context.user_data.pop("awaiting_proof_task_id", None)
-    await update.message.reply_text(t(update.effective_user.id, "proof_saved"), reply_markup=main_menu(update.effective_user.id))
-
-
 def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(ChatMemberHandler(track_bot_chats, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    async def combined_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await admin_flow_router(update, context):
+            await user_router(update, context)
+
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, proof_router))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, user_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, combined_router))
+
+    if app.job_queue:
+        app.job_queue.run_repeating(periodic_leave_check, interval=LEAVE_CHECK_INTERVAL_HOURS * 3600, first=600)
+        app.job_queue.run_repeating(daily_promo_post, interval=PROMO_INTERVAL_HOURS * 3600, first=900)
+
+    logger.info("EasyEarn bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 
